@@ -1,0 +1,55 @@
+/* Pepper — onboarding. One column, left-aligned, read top to bottom. */
+.wrap{max-width:720px;margin:0 auto;padding:36px 24px 64px}
+.top{display:flex;align-items:center;gap:10px;margin-bottom:36px}
+.top .corn-mark{width:26px;height:26px}
+.brandname{font-family:var(--serif);font-size:22px;font-weight:600}
+
+.update{border:1px solid var(--corn);background:var(--corn-soft);border-radius:16px;padding:18px 20px;margin-bottom:32px}
+.update h2{margin-bottom:8px}
+.update p+p{margin-top:8px}
+
+.intro h1{font-size:38px;line-height:1.1;max-width:18ch}
+.intro .lede{font-size:16.5px;margin-top:12px}
+
+/* the signature: a rough ask turned into six labelled parts */
+.recipe{margin:28px 0 0;border:1px solid var(--line);border-radius:18px;background:var(--surface);overflow:hidden}
+.recipe .ask{padding:16px 20px;background:var(--sunk);border-bottom:1px solid var(--line)}
+.recipe .ask p{font-size:16px;margin-top:2px}
+.parts{list-style:none;margin:0;padding:6px 20px 8px}
+.parts li{display:grid;grid-template-columns:150px 1fr;gap:16px;padding:10px 0;border-top:1px solid var(--line)}
+.parts li:first-child{border-top:0}
+.parts b{color:var(--pepper);font-size:14px;padding-top:2px}
+.parts span{font-family:var(--serif);font-size:15.5px;line-height:1.55}
+.recipe .check{display:flex;gap:10px;align-items:flex-start;padding:14px 20px;background:var(--corn-soft);font-size:14px}
+.recipe .check b{color:var(--corn)}
+.pin{width:10px;height:10px;border-radius:50%;background:var(--corn);flex:none;margin-top:6px}
+
+.steps{list-style:none;margin:44px 0 0;padding:0;display:flex;flex-direction:column;gap:36px}
+.step-h{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.num{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:var(--pepper-soft);color:var(--pepper);font-weight:700;font-size:14px;flex:none}
+.step>p{max-width:64ch}
+.step>p+p{margin-top:8px}
+.step .rows{margin-top:16px}
+.opt-tag{font-family:var(--sans);font-size:13px;font-weight:600;color:var(--muted);margin-left:6px}
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:14px}
+.keygrid{display:grid;grid-template-columns:220px 1fr;gap:14px;margin-top:16px}
+.quick{display:flex;flex-direction:column;gap:18px;margin-top:16px}
+.quick .q-t{font-weight:600;margin-bottom:8px}
+.quick .q-e{color:var(--muted);font-size:13px;margin-top:6px}
+.consent .site-sub{font-size:13px;color:var(--muted)}
+.consent.on .site-sub{color:var(--corn)}
+
+.finish{margin-top:44px;padding-top:28px;border-top:1px solid var(--line)}
+.btn.big{height:46px;padding:0 24px;font-size:15.5px;border-radius:12px}
+.ready{margin-top:20px}
+.ready h2{margin-bottom:6px}
+.sites{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}
+.sites a{display:inline-flex;align-items:center;height:36px;padding:0 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface);text-decoration:none;font-weight:600}
+.sites a:hover{border-color:var(--pepper)}
+.finish>.small{margin-top:18px}
+
+@media (max-width:620px){
+  .intro h1{font-size:30px}
+  .parts li{grid-template-columns:1fr;gap:2px}
+  .keygrid{grid-template-columns:1fr}
+}

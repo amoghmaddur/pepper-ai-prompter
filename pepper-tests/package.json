@@ -1,0 +1,11 @@
+{
+  "name": "pepper-tests",
+  "private": true,
+  "description": "Tests for Pepper — The Personal AI Prompter v0.3. Kept outside the extension folder so they are never packaged.",
+  "scripts": {
+    "test": "node --test unit/*.test.js",
+    "test:browser": "node --test --test-concurrency=1 e2e/browser.test.js",
+    "test:all": "npm test && npm run test:browser"
+  },
+  "devDependencies": { "playwright": "^1.56.0" }
+}

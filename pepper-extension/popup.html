@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pepper</title>
+<link rel="stylesheet" href="pages.css">
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+<main class="pop">
+  <header class="ph">
+    <span class="corn-mark" aria-hidden="true"></span>
+    <div class="grow"><b class="brandname">Pepper</b><small id="masterHelp">On for the five AI sites</small></div>
+    <label class="switch" title="Turn Pepper on or off everywhere"><input type="checkbox" id="master" aria-label="Pepper on or off" aria-describedby="masterHelp"><i></i></label>
+  </header>
+
+  <section class="here" id="here"></section>
+
+  <dl class="figs" id="figs"></dl>
+
+  <p class="nudge" id="nudge" hidden></p>
+
+  <footer class="pf">
+    <button class="btn primary" id="dash">Open dashboard</button>
+    <button class="btn" id="about">About you</button>
+  </footer>
+</main>
+<script src="lib/core.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy notice — Pepper — The Personal AI Prompter</title>
+<link rel="stylesheet" href="pages.css">
+<style>
+.doc{max-width:760px;margin:0 auto;padding:40px 24px 72px}
+.doc h1{font-size:32px;margin-bottom:16px}
+.doc h2{margin:34px 0 10px}
+.doc p,.doc li{max-width:68ch}
+.doc p+p{margin-top:10px}
+.doc ul,.doc ol{padding-left:22px;margin:8px 0}
+.doc li+li{margin-top:6px}
+.doc .draft{background:var(--warn-soft);color:var(--warn);border-radius:12px;padding:12px 14px}
+.review{background:var(--corn-soft);color:var(--corn);font-weight:600;border-radius:4px;padding:0 4px}
+.tw{overflow-x:auto;border:1px solid var(--line);border-radius:12px;background:var(--surface);margin-top:12px}
+table{border-collapse:collapse;width:100%;font-size:14px}
+th,td{text-align:left;vertical-align:top;padding:10px 12px;border-top:1px solid var(--line)}
+thead th{border-top:0;background:var(--sunk)}
+code{font-size:13px;background:var(--sunk);border-radius:4px;padding:1px 4px;white-space:nowrap}
+</style>
+</head>
+<body>
+<main class="doc">
+<h1>Pepper — The Personal AI Prompter: privacy notice</h1>
+<p class="draft"><b>Draft for review (Boondoggle step C15). Not yet approved. Every statement marked <span class="review">[needs review]</span> must be checked by a qualified reviewer (step H9) before this notice is published. This draft does not claim compliance with any law.</b></p>
+<p>Version 0.3.0. Last updated 2026-10-01.</p>
+<h2>The short version</h2>
+<p>Pepper keeps everything in your own browser. There is no Pepper server, no account, no analytics and no tracking. The only time anything leaves your browser is when you have added your own model key: then the text Pepper needs to write a prompt goes to the provider you chose (Anthropic or OpenAI), and nowhere else.</p>
+<p>Pepper saves the prompts you send, the replies and your ratings only on sites where you have turned learning on. Learning is off on all five sites until you turn it on.</p>
+<h2>What Pepper stores, and where</h2>
+<p>Everything below is kept in your browser's extension storage (<code>chrome.storage.local</code>) on this device. It is not synced to other devices.</p>
+<div class="tw"><table><thead><tr><th>Storage key</th><th>What it holds</th><th>When it is written</th></tr></thead><tbody><tr><td><code>pepper_settings</code></td><td>Whether Pepper is on, your provider, your API key, the model name, the typing-hint length, whether you finished onboarding</td><td>When you change a setting</td></tr><tr><td><code>pepper_profile</code></td><td>Your answers to the up-to-15 "About you" questions</td><td>When you answer them</td></tr><tr><td><code>pepper_memories</code></td><td>Facts you asked Pepper to remember, each on or off</td><td>When you add, edit, confirm or delete one</td></tr><tr><td><code>pepper_projects</code></td><td>Your projects: name, type, description, which files are attached</td><td>When you create or edit a project</td></tr><tr><td><code>pepper_active_project</code></td><td>Which project is active</td><td>When you pick one</td></tr><tr><td><code>pepper_files</code></td><td>Files you added: name, size, type and their text (up to 200,000 characters each)</td><td>When you add a file or paste its text</td></tr><tr><td><code>pepper_saved_prompts</code></td><td>Prompts you clicked Save on</td><td>When you click Save</td></tr><tr><td><code>pepper_consent</code></td><td>Whether learning is on for each of the five sites</td><td>When you change it</td></tr><tr><td><code>pepper_history</code></td><td>Only on sites with learning on: each prompt you sent, the rough request you typed into Pepper (if you used it), whether it went through Pepper and how closely it matched, the approach used, the project, the site, the time, the reply (up to 4,000 characters) and your star rating</td><td>When you press send on that site, and when the reply finishes</td></tr><tr><td><code>pepper_learning</code></td><td>What Pepper worked out from your rated history: the best approach and typical length per kind of work, the numbers behind it, when you last reset it, and facts you dismissed so they aren't suggested again</td><td>Recalculated whenever history or consent changes</td></tr><tr><td><code>pepper_ui</code></td><td>Where you dragged the peppercorn on each site</td><td>When you move it</td></tr><tr><td><code>pepper_schema</code></td><td>The storage format version, used to upgrade your data safely</td><td>On install and update</td></tr></tbody></table></div>
+<p>Pepper never reads the rest of the page you are on. On the five AI sites it reads the prompt box, and, only where learning is on, the newest reply after you press send.</p>
+<h2>How long it is kept</h2>
+<p>History older than 90 days is deleted automatically, and Pepper keeps at most 2,000 history records, removing the oldest first. Everything else stays until you delete it or uninstall Pepper.</p>
+<h2>What is sent to your model provider</h2>
+<p>Only if you have added an API key. Pepper sends these to the one provider you chose (<code>api.anthropic.com</code> or <code>api.openai.com</code>), using your key:</p>
+<ol><li><b>When you click "Write my prompt":</b> what you typed into Pepper; your profile answers; your active memories; the active project's name, type and description; the text of that project's attached files (up to 2,500 characters per file and 6,000 in total); the approach selected; a target length; any assumptions you added.</li><li><b>When you click Shorter, Longer, More formal or More casual:</b> the current prompt.</li><li><b>When you click "Find facts in my prompts" in Memories:</b> up to 30 of your recorded prompts (the rough request where you used Pepper), each cut to 800 characters.</li><li><b>When you click "Test connection":</b> the word "ping".</li></ol>
+<p><b>Your profile and the text of your files, including a resume, go to that provider whenever you write a prompt with a key set.</b> What the provider does with that data is governed by your agreement with them, not by Pepper. <span class="review">[needs review]</span></p>
+<p>Your API key is sent only to the provider it belongs to. It is never sent anywhere else, never logged, never shown on the AI sites and never included in an export.</p>
+<p>Without a key, nothing leaves your browser. Pepper writes the prompt with its built-in template on your device.</p>
+<h2>What happens on the AI sites</h2>
+<p>When you click Insert, Pepper places the prompt in the site's own prompt box. It never presses send. When you press send, the prompt goes to that site under that site's own terms and privacy policy, exactly as if you had typed it. <span class="review">[needs review]</span></p>
+<p>If Pepper can't place the prompt in the box, it copies it to your clipboard and tells you.</p>
+<h2>What Pepper never collects</h2>
+<ul><li>No analytics, telemetry, crash reports or usage statistics.</li><li>No account, email address or name, unless you type them into your own profile or files.</li><li>No browsing history. Pepper runs only on chatgpt.com, chat.openai.com, claude.ai, gemini.google.com, perplexity.ai and copilot.microsoft.com.</li><li>Nothing is recorded while Pepper is switched off, or on a site where learning is off.</li></ul>
+<h2>How you stay in control</h2>
+<p>In the dashboard under <b>Privacy and data</b> you can:</p>
+<ul><li>turn learning on or off for each site, or for all five at once (turning it off mid-reply discards the pending record);</li><li>switch Pepper off everywhere, which hides it and stops all recording;</li><li>delete any single history record, or all history;</li><li>export everything as a JSON file (your API key and settings are left out);</li><li>remove your API key;</li><li>delete everything Pepper has stored.</li></ul>
+<p>Under <b>What Pepper learned</b> you can see what Pepper concluded and reset it for any kind of work.</p>
+<h2>Uninstalling</h2>
+<p>Removing Pepper from your browser deletes everything in its extension storage on that device. <span class="review">[needs review: confirm current Chrome and Edge behaviour]</span></p>
+<h2>Who this notice is from, and how to ask questions</h2>
+<p><span class="review">[needs review: name of the publisher and a contact address, as required by the Chrome Web Store and Microsoft Edge Add-ons user-data policies]</span></p>
+<h2>Changes to this notice</h2>
+<p>If this notice changes, the new version ships with the extension update and the date above changes. <span class="review">[needs review: whether material changes require renewed consent]</span></p>
+</main>
+</body>
+</html>

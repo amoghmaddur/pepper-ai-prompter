@@ -1,0 +1,4 @@
+/* Pepper — The Personal AI Prompter. The panel lives in a closed shadow root
+   with its own styles; this only resets the host element against the page's
+   CSS. Position comes from the element's inline style, which wins. */
+#pepper-host{all:initial}

@@ -1,0 +1,9 @@
+node_modules/
+pepper-tests/test-results/
+demo/media/raw.webm
+demo/core.js
+_site/
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini

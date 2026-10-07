@@ -1,0 +1,58 @@
+[
+  {
+    "name": "title",
+    "t": 0.02
+  },
+  {
+    "name": "problem",
+    "t": 5.198
+  },
+  {
+    "name": "compose",
+    "t": 12.256
+  },
+  {
+    "name": "result",
+    "t": 22.284
+  },
+  {
+    "name": "rewrite",
+    "t": 29.282
+  },
+  {
+    "name": "insert",
+    "t": 34.412
+  },
+  {
+    "name": "rate",
+    "t": 41.977
+  },
+  {
+    "name": "model",
+    "t": 47.614
+  },
+  {
+    "name": "assume",
+    "t": 54.046
+  },
+  {
+    "name": "sites",
+    "t": 67.104
+  },
+  {
+    "name": "learn",
+    "t": 91.756
+  },
+  {
+    "name": "dashboard",
+    "t": 100.756
+  },
+  {
+    "name": "end",
+    "t": 113.542
+  },
+  {
+    "name": "done",
+    "t": 118.053
+  }
+]

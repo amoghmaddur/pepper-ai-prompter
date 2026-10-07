@@ -1,0 +1,40 @@
+name: Deploy playground
+
+# Publishes demo/ to GitHub Pages, with the extension's own lib/core.js beside it,
+# so the playground always runs the engine the extension ships.
+on:
+  push:
+    branches: [main]
+    paths: ["demo/**", "pepper-extension/lib/core.js", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Assemble the site
+        run: |
+          mkdir -p _site/media
+          cp demo/index.html demo/playground.css demo/playground.js _site/
+          cp demo/media/*.mp4 demo/media/*.png _site/media/
+          cp pepper-extension/lib/core.js _site/core.js
+          touch _site/.nojekyll
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

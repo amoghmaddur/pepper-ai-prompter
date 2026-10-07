@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pepper — The Personal AI Prompter</title>
+<link rel="stylesheet" href="pages.css">
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand"><span class="corn-mark" aria-hidden="true"></span><span>Pepper</span></div>
+    <nav class="nav" id="nav" aria-label="Sections">
+      <a href="#home" data-s="home">Home</a>
+      <a href="#about" data-s="about">About you <span class="count" id="navAbout"></span></a>
+      <a href="#memories" data-s="memories">Memories</a>
+      <a href="#projects" data-s="projects">Projects and files</a>
+      <a href="#saved" data-s="saved">Saved prompts</a>
+      <a href="#history" data-s="history">History</a>
+      <a href="#learned" data-s="learned">What Pepper learned</a>
+      <hr>
+      <a href="#privacy" data-s="privacy">Privacy and data</a>
+      <a href="#settings" data-s="settings">Model and settings</a>
+    </nav>
+    <label class="master">
+      <span class="switch"><input type="checkbox" id="masterSwitch" aria-describedby="masterHelp"><i></i></span>
+      <span><b id="masterLabel">Pepper is on</b><small id="masterHelp">Shows Pepper on the five AI sites.</small></span>
+    </label>
+  </aside>
+
+  <main class="main" id="main">
+
+    <!-- HOME -->
+    <section data-section="home">
+      <h1>Your Pepper</h1>
+      <p class="lede">Pepper turns a rough request into a clear six-part prompt, built only from what you tell it here. It never sends anything for you; you always press send.</p>
+      <div class="block">
+        <h2>Get set up</h2>
+        <ol class="checklist" id="checklist"></ol>
+      </div>
+      <div class="block" id="figuresBlock">
+        <h2>How it's going</h2>
+        <dl class="figures" id="figures"></dl>
+      </div>
+      <div class="block">
+        <div class="block-h"><h2>Recent prompts</h2><a class="link" href="#history">See all history</a></div>
+        <div id="recent"></div>
+      </div>
+    </section>
+
+    <!-- ABOUT YOU -->
+    <section data-section="about" hidden>
+      <div class="sec-h">
+        <div><h1>About you</h1>
+        <p class="lede">Every answer changes the prompts Pepper writes. Each question says how. Answers save as you go.</p></div>
+        <div class="progress" aria-live="polite"><span id="aboutCount"></span><span class="bar"><i id="aboutBar"></i></span></div>
+      </div>
+      <div id="quiz"></div>
+      <p class="saved" id="aboutSaved" aria-live="polite"></p>
+    </section>
+
+    <!-- MEMORIES -->
+    <section data-section="memories" hidden>
+      <h1>Memories</h1>
+      <p class="lede">Short facts Pepper adds to the context of every prompt while they're switched on. Keep them true and specific: "I'm targeting new-grad SWE roles in Boston."</p>
+      <form class="add" id="memForm">
+        <input type="text" id="memNew" placeholder="Add a fact about you or how you like to work" aria-label="New memory">
+        <button class="btn primary" type="submit">Add memory</button>
+      </form>
+      <div id="memList"></div>
+      <div class="block">
+        <div class="block-h"><h2>Suggested from your prompts</h2></div>
+        <p class="muted small">Pepper can read prompts you've sent on sites with learning on and suggest facts you stated about yourself. Nothing becomes a memory until you add it. This sends those prompts to your model provider.</p>
+        <div class="toolbar"><button class="btn" id="factsBtn">Find facts in my prompts</button><span class="muted small" id="factsNote"></span></div>
+        <div id="factsList"></div>
+      </div>
+    </section>
+
+    <!-- PROJECTS + FILES -->
+    <section data-section="projects" hidden>
+      <h1>Projects and files</h1>
+      <p class="lede">A project tells Pepper what kind of work you're doing and which files are the source of truth. Pick the active project from the panel on any AI site.</p>
+      <details class="create" id="projCreate">
+        <summary class="btn primary">New project</summary>
+        <form class="projform" id="projForm">
+          <label class="field"><span>Name</span><input type="text" id="pName" placeholder="Fall 2026 job hunt" required></label>
+          <label class="field"><span>Kind of work</span><select id="pType"></select></label>
+          <label class="field wide"><span>What it's for</span><input type="text" id="pDesc" placeholder="New-grad software roles; I want letters that sound like me"></label>
+          <div class="wide"><button class="btn primary" type="submit">Create project</button></div>
+        </form>
+      </details>
+      <div id="projList"></div>
+
+      <div class="block">
+        <h2>Files</h2>
+        <p class="muted small">Text files are read automatically. For PDF or Word files, paste the text once. Pepper uses up to 2,500 characters per file and 6,000 per prompt, and marks anything trimmed.</p>
+        <div class="drop" id="drop">
+          <input type="file" id="fileInput" multiple hidden>
+          <p><b>Drop files here</b> or <button class="link" id="pick" type="button">choose files</button></p>
+        </div>
+        <div id="fileList"></div>
+      </div>
+    </section>
+
+    <!-- SAVED -->
+    <section data-section="saved" hidden>
+      <h1>Saved prompts</h1>
+      <p class="lede">Prompts you saved from the panel. They show up as suggestions in the panel for the same project.</p>
+      <input type="search" id="savedSearch" placeholder="Search saved prompts" class="search" aria-label="Search saved prompts">
+      <div id="savedList"></div>
+    </section>
+
+    <!-- HISTORY -->
+    <section data-section="history" hidden>
+      <h1>History</h1>
+      <p class="lede">Prompts you sent on sites where learning is on, with up to 4,000 characters of each reply and your rating. Kept for 90 days or 2,000 prompts.</p>
+      <div class="toolbar">
+        <input type="search" id="histSearch" placeholder="Search prompts and replies" class="search" aria-label="Search history">
+        <select id="histSite" aria-label="Filter by site"></select>
+        <select id="histKind" aria-label="Filter by kind">
+          <option value="">All prompts</option><option value="assisted">Through Pepper</option><option value="unrated">Not rated yet</option>
+        </select>
+      </div>
+      <div id="histList"></div>
+    </section>
+
+    <!-- LEARNED -->
+    <section data-section="learned" hidden>
+      <h1>What Pepper learned</h1>
+      <p class="lede">From the prompts you sent through Pepper and rated, on sites where learning is on, Pepper works out which approach to pick first and how long to aim for each kind of work, and it suggests your best past requests. Your profile and memories change only when you confirm a suggestion.</p>
+      <div id="learnStatus"></div>
+      <div id="learnTypes"></div>
+      <div class="block" id="liftBlock"></div>
+      <div class="block">
+        <h2>Worked best for you</h2>
+        <p class="muted small">Your 4 and 5 star requests. They appear as suggestions in the panel.</p>
+        <div id="bestList"></div>
+      </div>
+    </section>
+
+    <!-- PRIVACY -->
+    <section data-section="privacy" hidden>
+      <h1>Privacy and data</h1>
+      <p class="lede">Everything Pepper keeps stays in this browser. If you add a model key, the text Pepper needs goes to that provider when you ask it to write, rewrite or find facts. Nothing else leaves.</p>
+      <div class="block">
+        <div class="block-h"><h2>Learning, site by site</h2>
+          <span><button class="btn sm" id="allOn">Turn on for all five</button> <button class="btn sm" id="allOff">Turn off for all</button></span></div>
+        <p class="muted small">When learning is on for a site, Pepper saves each prompt you send there, up to 4,000 characters of the reply, and your star rating. That's what lets it learn which approach works for you. When it's off, Pepper still writes prompts but saves nothing.</p>
+        <div class="rows" id="consentRows"></div>
+      </div>
+      <div class="block">
+        <h2>Your data</h2>
+        <div class="rows">
+          <div class="row row-h"><div class="grow"><b>Export everything</b><p class="muted small">A JSON file of your profile, memories, projects, files, saved prompts, history and what Pepper learned. Your API key is never included.</p></div><button class="btn" id="export">Export</button></div>
+          <div class="row row-h"><div class="grow"><b>Delete history</b><p class="muted small" id="histCount"></p></div><button class="btn danger" id="clearHist">Delete history</button></div>
+          <div class="row row-h"><div class="grow"><b>Remove API key</b><p class="muted small" id="keyState"></p></div><button class="btn danger" id="removeKey">Remove key</button></div>
+          <div class="row row-h"><div class="grow"><b>Delete everything</b><p class="muted small">Clears all Pepper data in this browser. Uninstalling Pepper does the same.</p></div><button class="btn danger" id="wipe">Delete everything</button></div>
+        </div>
+      </div>
+      <p class="small"><a href="privacy.html" target="_blank">Read the full privacy notice</a></p>
+    </section>
+
+    <!-- SETTINGS -->
+    <section data-section="settings" hidden>
+      <h1>Model and settings</h1>
+      <p class="lede">With your own API key, your model writes the prompt. Without one, Pepper uses its built-in template, which works offline but is less tailored.</p>
+      <form class="settings" id="settingsForm">
+        <label class="field"><span>Provider</span>
+          <select id="sProvider"><option value="none">None (built-in template)</option><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
+        <label class="field"><span>API key</span>
+          <span class="keyrow"><input type="password" id="sKey" autocomplete="off" spellcheck="false" placeholder="Paste your key"><button class="btn sm" type="button" id="showKey">Show</button></span>
+          <small>Stored only in this browser and sent only to the provider above. Never exported.</small></label>
+        <label class="field"><span>Model</span><input type="text" id="sModel" spellcheck="false"><small id="modelHelp">Leave blank to use the default.</small></label>
+        <div class="toolbar"><button class="btn" type="button" id="testKey">Test connection</button><span class="small" id="testNote" aria-live="polite"></span></div>
+        <label class="field"><span>Show the typing hint after</span>
+          <span class="inline"><input type="number" id="sMin" min="2" max="40" style="width:90px"> characters</span>
+          <small>A pink dot on the orb tells you Pepper can expand what you've typed.</small></label>
+        <div class="field"><span>Keyboard shortcut</span><small>Alt+Shift+P opens Pepper on any of the five sites. <button class="link" type="button" id="shortcuts">Change it</button></small></div>
+        <div class="toolbar"><button class="btn primary" type="submit">Save settings</button><span class="saved" id="settingsSaved" aria-live="polite"></span></div>
+      </form>
+    </section>
+  </main>
+</div>
+<script src="lib/core.js"></script>
+<script src="dashboard.js"></script>
+</body>
+</html>
