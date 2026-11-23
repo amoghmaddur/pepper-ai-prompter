@@ -557,62 +557,84 @@ async function aiStatus() {
 }
 
 /* ---------- model call (exactly three hosts; key never logged or returned) ---------- */
+// Busy or overloaded answers are worth another try; Gemini also has lighter models to fall back on.
+const RETRYABLE = (st) => st === 408 || st === 429 || st === 500 || st === 502 || st === 503 || st === 504 || st === 529;
+const GEMINI_FALLBACKS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const pause = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function callProvider(provider, model, apiKey, system, user, maxTokens, signal) {
+  let res, data;
+  if (provider === "anthropic") {
+    res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST", signal,
+      headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true" },
+      body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] })
+    });
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
+    return { ok: true, model, text: (data.content || []).map(b => b.text || "").join("\n").trim() };
+  }
+  if (provider === "openai") {
+    res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST", signal,
+      headers: { "content-type": "application/json", "authorization": "Bearer " + apiKey },
+      body: JSON.stringify({ model, max_completion_tokens: Math.max(maxTokens, 4000),
+        messages: [{ role: "system", content: system }, { role: "user", content: user }] })
+    });
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
+    return { ok: true, model, text: ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "").trim() };
+  }
+  if (provider === "gemini") {
+    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      method: "POST", signal,
+      headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }],
+        generationConfig: { maxOutputTokens: Math.max(maxTokens, 8192) } })
+    });
+    data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
+    const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+    const text = parts.filter(x => !x.thought).map(x => x.text || "").join("").trim();
+    return text ? { ok: true, model, text } : { ok: false, error: "The model sent back an empty answer.", status: 503 };
+  }
+  return { ok: false, error: "Unknown provider" };
+}
+
 async function callLLM(system, user, maxTokens) {
   const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
   const provider = pepper_settings.provider;
   const keyed = KEY_PROVIDERS.includes(provider);
   const apiKey = keyed ? await Vault.get("apiKey").catch(() => null) : null;
   const owner = apiKey ? await Vault.get("keyProvider").catch(() => null) : null;
-  // A key is only ever sent to the provider it was saved for. Without one, Chrome's built-in AI
-  // writes the prompt when it's on this computer; otherwise the page falls back to asking the chat's AI.
-  if (!keyed || !apiKey || (owner && owner !== provider)) {
-    if (pepper_settings.builtin === false) return { ok: false, error: keyed ? "NO_KEY" : "NO_AI" };
+  const builtin = async (fallbackError) => {
+    if (pepper_settings.builtin === false) return fallbackError;
     const r = await callBuiltin(system, user);
-    return r.ok || r.error !== "NO_AI" ? r : { ok: false, error: keyed ? "NO_KEY" : "NO_AI" };
+    return r.ok || r.error !== "NO_AI" ? r : fallbackError;
+  };
+  // A key is only ever sent to the provider it was saved for. Without one, Chrome's built-in AI
+  // writes the prompt when it's on this computer; otherwise the page uses Pepper's own writer.
+  if (!keyed || !apiKey || (owner && owner !== provider)) return builtin({ ok: false, error: keyed ? "NO_KEY" : "NO_AI" });
+  const chosen = (pepper_settings.model || "").trim().replace(/^models\//, "") || C.DEFAULT_MODELS[provider];
+  const models = provider === "gemini" ? [...new Set([chosen, ...GEMINI_FALLBACKS])] : [chosen];
+  const deadline = Date.now() + 40000;
+  let last = { ok: false, error: "No reply" };
+  for (let i = 0; i < models.length && Date.now() < deadline - 2000; i++) {
+    // The chosen model gets one quick retry when it's busy; fallbacks get one try each.
+    for (let attempt = 0; attempt < (i === 0 ? 2 : 1) && Date.now() < deadline - 2000; attempt++) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), Math.min(25000, deadline - Date.now()));
+      try { last = await callProvider(provider, models[i], apiKey, system, user, maxTokens, ctrl.signal); }
+      catch (e) { last = { ok: false, error: e.name === "AbortError" ? "The model took too long to answer." : "Couldn't reach the provider: " + (e.message || String(e)), status: e.name === "AbortError" ? 408 : 0 }; }
+      finally { clearTimeout(timer); }
+      if (last.ok) return last;
+      if (!RETRYABLE(last.status) && last.status !== 0) break; // a wrong key or a bad request won't fix itself
+      if (attempt === 0 && i === 0) await pause(700);
+    }
+    if (last.status && !RETRYABLE(last.status) && last.status !== 404) break; // a missing model moves on to the next one
   }
-  const model = (pepper_settings.model || "").trim().replace(/^models\//, "") || C.DEFAULT_MODELS[provider];
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 40000);
-  try {
-    let res, data;
-    if (provider === "anthropic") {
-      res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST", signal: ctrl.signal,
-        headers: { "content-type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01",
-          "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] })
-      });
-      data = await res.json().catch(() => ({}));
-      if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
-      return { ok: true, model, text: (data.content || []).map(b => b.text || "").join("\n").trim() };
-    }
-    if (provider === "openai") {
-      res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST", signal: ctrl.signal,
-        headers: { "content-type": "application/json", "authorization": "Bearer " + apiKey },
-        body: JSON.stringify({ model, max_completion_tokens: Math.max(maxTokens, 4000),
-          messages: [{ role: "system", content: system }, { role: "user", content: user }] })
-      });
-      data = await res.json().catch(() => ({}));
-      if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
-      return { ok: true, model, text: ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "").trim() };
-    }
-    if (provider === "gemini") {
-      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-        method: "POST", signal: ctrl.signal,
-        headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }],
-          generationConfig: { maxOutputTokens: Math.max(maxTokens, 8192) } })
-      });
-      data = await res.json().catch(() => ({}));
-      if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
-      const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
-      return { ok: true, model, text: parts.filter(x => !x.thought).map(x => x.text || "").join("").trim() };
-    }
-    return { ok: false, error: "Unknown provider" };
-  } catch (e) {
-    return { ok: false, error: e.name === "AbortError" ? "The model took longer than 40 seconds." : "Couldn't reach the provider: " + (e.message || String(e)) };
-  } finally {
-    clearTimeout(timer);
-  }
+  // Still nothing: Chrome's own AI, if this computer has it; else the error, and Pepper's own writer takes over.
+  const r = await builtin(null);
+  return r && r.ok ? r : { ...last, busy: RETRYABLE(last.status) };
 }

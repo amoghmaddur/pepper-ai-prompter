@@ -829,17 +829,26 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     text = text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     return text.length < 160 ? "" : text.slice(-2400);
   }
-  /** Rewrites a rough prompt with the user's AI. With none connected, Pepper writes a prompt that asks the chat's AI to work out the intent first. */
+  const PROVIDER_NAME = { gemini: "Gemini", anthropic: "Claude", openai: "OpenAI", chrome: "Chrome's AI" };
+  const aiName = () => PROVIDER_NAME[S.settings.provider] || "Your AI";
+  /** Why the AI didn't answer, in a few words. */
+  const whyNot = (r) => r && r.busy ? "is busy right now" : r && /quota|rate|limit/i.test(r.error || "") ? "hit its usage limit" : "didn't answer";
+  /**
+   * Pepper's own writer drafts the prompt instantly, on this device. The user's AI, when connected,
+   * improves on that draft; if it's missing or busy, the draft is the prompt.
+   */
   async function rewrite(raw, ctx, lens) {
     const conversation = recentConversation();
     const opts = { site: SITE ? SITE.name : ((A.AI_SITES.find(x => x.id === $("sendTo").value) || fav()).name), inChat: !!conversation, conversation };
-    const r = await llm(C.buildSystemPrompt(ctx, lens, opts), C.buildUserMessage(raw, ctx, opts));
+    const local = C.improveLocally(raw, ctx, { lens, inChat: !!conversation });
+    const r = await llm(C.buildSystemPrompt(ctx, lens, opts), C.buildUserMessage(raw, ctx, { ...opts, draft: local.prompt }));
     if (r && r.ok && r.text) {
       const p = C.parseReply(r.text);
       if (p.prompt) return { engine: "llm", model: r.model, ...p };
     }
     if (noAI(r) && aiState) aiState.engine = "none";
-    return { engine: "offline", noAI: noAI(r), error: noAI(r) ? null : ((r && r.error) || "No reply"), prompt: C.offlinePrompt(raw, ctx, opts), assumptions: [], status: "ok" };
+    return { engine: "local", noAI: noAI(r), why: noAI(r) ? "" : whyNot(r), error: noAI(r) ? null : ((r && r.error) || "No reply"),
+      prompt: local.prompt, assumptions: [], status: "ok" };
   }
   async function runExpand() {
     const raw = $("raw").value.trim();
@@ -892,13 +901,13 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     $("files").classList.toggle("show", used.length > 0);
     $("filesUsed").textContent = used.length ? "Using " + used.map(f => f.name + (f.truncated ? " (trimmed)" : "")).join(", ") : "";
     renderAssumptions();
-    root.querySelectorAll("#tools button[data-t]").forEach(b => b.hidden = o.engine !== "llm");
-    const target = esc(SITE ? SITE.name : (A.AI_SITES.find(x => x.id === $("sendTo").value) || fav()).name);
+    // Shorter and Longer work everywhere (Pepper's writer redoes it); formal and casual need an AI.
+    root.querySelectorAll("#tools button[data-t]").forEach(b => b.hidden = o.engine === "saved" || (o.engine === "local" && !/shorten|expand/.test(b.dataset.t)));
     $("engine").innerHTML =
       o.engine === "llm" ? `Improved by ${esc(o.model || "your AI")}.` :
       o.engine === "saved" ? "From your saved prompts." :
-      o.error ? `Your AI didn't answer (${esc(o.error)}), so this asks ${target} to work out what you mean first.` :
-      `No AI connected, so this asks ${target} to work out what you mean first. <button class="link" id="connectAI">Connect a free AI</button> to see a full rewrite here.`;
+      o.error ? `Improved by Pepper on this device: ${esc(aiName())} ${esc(o.why || "didn't answer")}.` :
+      `Improved by Pepper on this device. <button class="link" id="connectAI">Connect a free AI</button> for even sharper rewrites.`;
     const ca = root.getElementById("connectAI"); if (ca) ca.onclick = connectAI;
     // On an AI site the prompt goes in this box; anywhere else it goes to the user's AI.
     $("sendRow").hidden = !!SITE;
@@ -958,6 +967,10 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   async function runTransform(kind) {
     if (!out) return;
     if (out.editing) { out.prompt = $("editor").value; out.editing = false; }
+    if (out.engine === "local" && out.raw && (kind === "shorten" || kind === "expand")) {
+      showResult({ ...out, prompt: C.offlinePrompt(out.raw, out.ctx, { lens: kind, inChat: false }), lens: kind });
+      return;
+    }
     setBusy(true);
     const r = await llm(C.buildTransformSystem(), C.transformInstruction(kind) + "\n\nPROMPT:\n" + out.prompt);
     setBusy(false);
@@ -1667,7 +1680,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     chipState("done");
     mood("happy", 1400);
     const n = out.assumptions.length;
-    if (res.engine === "offline") toast(res.noAI ? `No AI connected, so I've asked ${SITE.name} to work out what you mean first. Connect a free AI in Pepper's settings to see a full rewrite.` : `Your AI didn't answer, so I've asked ${SITE.name} to sharpen it instead.`);
+    if (res.engine === "local" && res.why) toast(`${aiName()} ${res.why}, so I improved it myself.`);
     else if (n) toast(`Improved. I wasn't sure about ${n} detail${n === 1 ? "" : "s"}; click me to add ${n === 1 ? "it" : "them"}.`);
   }
   async function undoImprove() {

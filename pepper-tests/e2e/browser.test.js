@@ -113,7 +113,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
     await storage.consent("chatgpt", true); await storage.consent("claude", true); await storage.consent("copilot", true);
     const gpt = await ctx.newPage(); await gpt.goto("https://chatgpt.com/"); await gpt.waitForTimeout(1200);
 
-    await t.test("compose without an AI: the prompt keeps your words and asks the chat's AI to work out what you mean", async () => {
+    await t.test("compose without an AI: Pepper's own writer gives the request its expert, the details and your background", async () => {
       await P(gpt, "#orb").click();
       await gpt.waitForTimeout(300);
       await gpt.screenshot({ path: path.join(SHOTS, "panel-open.png") }); // what the panel shows first (kept by CI)
@@ -121,14 +121,13 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       await gpt.screenshot({ path: path.join(SHOTS, "panel-compose.png") });
       await P(gpt, "#go").click();
       await P(gpt, "#result").waitFor({ state: "visible" });
-      assert.match(await P(gpt, "#engine").textContent(), /^No AI connected, so this asks ChatGPT to work out what you mean first\./);
+      assert.match(await P(gpt, "#engine").textContent(), /^Improved by Pepper on this device\./);
       const body = await P(gpt, "#prompt").innerText();
-      assert.match(body, /^Write a cover letter for the Stripe new-grad SWE role\n/);
+      assert.match(body, /^You're an experienced recruiter and career coach in software\.\nWrite a cover letter for the Stripe new-grad SWE role\./);
       assert.match(body, /About me: I'm a graduate student in software\./);
       assert.match(body, /no em dashes/);
-      assert.match(body, /never invent experience/);
       assert.equal(await P(gpt, "#prompt .sec-l").count(), 0, "a plain prompt, not six boxes");
-      assert.equal(await P(gpt, '#tools button[data-t]:visible').count(), 0, "reshaping needs an AI, so those buttons are hidden");
+      assert.deepEqual(await P(gpt, '#tools button[data-t]:visible').allTextContents(), ["Shorter", "Longer"], "formal and casual need an AI");
       await gpt.screenshot({ path: path.join(SHOTS, "panel-result-offline.png") });
     });
 
@@ -136,7 +135,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       await P(gpt, "#insert").click();
       await wait(300);
       const boxText = await gpt.evaluate(() => document.getElementById("prompt-textarea").innerText);
-      assert.match(boxText, /^Write a cover letter for the Stripe new-grad SWE role/); assert.match(boxText, /ask me up to 3 quick questions/);
+      assert.match(boxText, /^You're an experienced recruiter[\s\S]*Write a cover letter for the Stripe new-grad SWE role\./); assert.match(boxText, /job description/);
       assert.equal(await gpt.evaluate(() => window.__sent.length), 0, "Pepper never sends");
       await gpt.click("#prompt-textarea"); await gpt.keyboard.press("End"); await gpt.keyboard.press("Enter");
       const h = await until(async () => { const x = await storage.get("pepper_history"); return x && x[0] && x[0].response ? x : null; });

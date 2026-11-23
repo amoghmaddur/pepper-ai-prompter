@@ -59,30 +59,40 @@ test("C5 system prompt no longer asks the model to infer context", () => {
 });
 
 /* ---------------- N1: the prompt Pepper writes without an AI ---------------- */
-test("N1 offline prompt: keeps the user's words, adds what helps, and asks the chat's AI to work out a vague request", () => {
+test("N1 Pepper's own writer: a misspelt, vague recipe request becomes a chef's full brief, with no job title in it", () => {
+  const ctx = C.buildContext(state({ profile: { answers: { ...fullAnswers(), q3: "Master's student of Information Systems" } } }));
+  const out = C.offlinePrompt("chickent curry recipe indian spicy full", ctx);
+  assert.match(out, /^You're an experienced Indian home chef/);
+  assert.match(out, /Give me a complete, authentic recipe for a spicy Indian chicken curry\./);
+  assert.match(out, /substitutes for anything hard to find or not fresh/);
+  assert.match(out, /numbered cooking steps with times and heat levels/);
+  assert.ok(!/Information Systems|About me|My request is short/.test(out), "the profile only goes where it changes the answer");
+  assert.match(C.offlinePrompt("south indian chicken curry", ctx), /^You're an experienced South Indian home chef\./);
+});
+test("N1 Pepper's own writer: each kind of request gets its expert and what a great answer includes", () => {
   const ctx = C.buildContext(state({ profile: { answers: fullAnswers() } }));
-  const out = C.offlinePrompt("cover letter stripe", ctx);
-  assert.match(out, /^Cover letter stripe\n/);
-  assert.match(out, /About me: I'm a graduate student in software\./);
-  assert.match(out, /professional tone; bullet points/);
-  assert.match(out, /never invent experience/, "a career request gets the career instruction");
-  assert.match(out, /ask me up to 3 quick questions/, "a vague request asks the AI to check first");
+  const cover = C.offlinePrompt("cover letter stripe", ctx);
+  assert.match(cover, /^You're an experienced recruiter and career coach in software\.\nWrite a cover letter for Stripe\./);
+  assert.match(cover, /About me: I'm a graduate student in software\./, "a cover letter is about you, so your background goes in");
+  assert.match(C.offlinePrompt("goa trip 3 days cheap", ctx), /Plan a 3-day trip to Goa on a tight budget\./);
+  assert.match(C.offlinePrompt("fix this python eror", ctx), /^You're a senior Python engineer\.\nFix this Python error\./);
+  assert.match(C.offlinePrompt("email to profesor asking for extension", ctx), /^Write a clear email to my professor asking for extension\./);
+  assert.match(C.offlinePrompt("logo for my bakery", ctx), /Design a logo for my bakery\./);
   const long = C.offlinePrompt("Here is my function, it throws a TypeError when the list is empty:\n```js\nconst f = (a) => a[0].x;\n```", ctx);
   assert.match(long, /complete, working code/);
-  assert.match(long, /If anything essential is missing, ask me before you start\./);
-  assert.ok(long.includes("const f = (a) => a[0].x;"), "pasted code is kept exactly");
+  assert.ok(long.includes("```js\nconst f = (a) => a[0].x;\n```"), "pasted code is kept exactly");
 });
 test("N1 offline prompt with an empty profile states no facts about the user; a follow-up in a chat stays short", () => {
   const out = C.offlinePrompt("write a cover letter", C.buildContext(state()));
   assert.ok(!/I'm a |About me/.test(out));
   const ctx = C.buildContext(state({ profile: { answers: fullAnswers() } }));
-  const f = C.offlinePrompt("make it shorter", ctx, { inChat: true });
-  assert.ok(!/About me/.test(f), "the chat already knows the background");
+  assert.equal(C.offlinePrompt("make it shorter", ctx, { inChat: true }), "Make your last answer shorter: keep the key points and cut everything else.");
+  assert.equal(C.offlinePrompt("now in python", ctx, { inChat: true }), "Do the same as your last answer, but in python.");
 });
 test("N1 every kind of request is recognised", () => {
   const kinds = { "fix this python error": "code", "reply to my landlord's email": "email", "summarize this article": "summary",
-    "react vs vue": "compare", "names for my bakery": "ideas", "how do i learn guitar": "plan", "why is the sky blue": "explain",
-    "write a poem about rain": "write", "tailor my resume": "career" };
+    "react vs vue": "compare", "names for my bakery": "ideas", "make me a daily study schedule": "plan", "how do i learn guitar": "explain", "why is the sky blue": "explain",
+    "write a poem about rain": "writing", "tailor my resume": "career", "my thesis on supply chains": "academic" };
   for (const [raw, id] of Object.entries(kinds)) assert.equal((C.kindOf(raw) || {}).id, id, raw);
   assert.equal(C.kindOf("hello"), null);
 });

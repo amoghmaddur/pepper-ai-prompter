@@ -193,3 +193,19 @@ test("WIPE from an extension page clears everything and restores safe defaults",
   const d = bg.storage._raw();
   assert.deepEqual(d.pepper_history, []); assert.deepEqual(d.pepper_consent, C.defaultConsent()); assert.equal(d.pepper_settings.hasKey, false);
 });
+
+test("A busy Gemini is retried, then its lighter models are tried; a wrong key isn't retried", async () => {
+  const bg = await freshBg();
+  await bg.send({ type: "SET_KEY", provider: "gemini", apiKey: "AIza-test-123456" }, bg.fromExt);
+  bg.sandbox.__fetchImpl = async (url) => /gemini-flash-latest:/.test(url)
+    ? { ok: false, status: 503, json: async () => ({ error: { message: "The model is overloaded." } }) }
+    : { ok: true, status: 200, json: async () => ({ candidates: [{ content: { parts: [{ text: "Better prompt" }] } }] }) };
+  const r = await bg.send({ type: "LLM", system: "s", user: "u" }, bg.fromExt);
+  assert.deepEqual([r.ok, r.text, r.model], [true, "Better prompt", "gemini-flash-lite-latest"]);
+  assert.equal(bg.fetchCalls.filter(c => /gemini-flash-latest:/.test(c.url)).length, 2, "the chosen model gets one retry");
+  bg.fetchCalls.length = 0;
+  bg.sandbox.__fetchImpl = async () => ({ ok: false, status: 400, json: async () => ({ error: { message: "API key not valid." } }) });
+  const bad = await bg.send({ type: "LLM", system: "s", user: "u" }, bg.fromExt);
+  assert.equal(bad.error, "API key not valid.");
+  assert.equal(bg.fetchCalls.length, 1, "no point retrying a wrong key");
+});
