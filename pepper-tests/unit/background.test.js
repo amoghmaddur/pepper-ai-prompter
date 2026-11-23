@@ -13,12 +13,15 @@ async function freshBg(consent) {
   return bg;
 }
 
-test("C11 fresh install: learning off on all five, default memory inactive, schema 1, onboarding opened", async () => {
+test("C11 fresh install: learning off on all five, default memory inactive, schema 2, setup not done, onboarding opened", async () => {
   const bg = await freshBg();
   const d = bg.storage._raw();
   assert.deepEqual(d.pepper_consent, C.defaultConsent());
   assert.ok(d.pepper_memories.every(m => m.active === false));
-  assert.equal(d.pepper_schema, 1);
+  assert.equal(d.pepper_schema, 2);
+  assert.equal(d.pepper_profile.completed, false);
+  assert.equal(d.pepper_settings.floating, null, "where Pepper floats is the user's choice in onboarding");
+  assert.deepEqual(d.pepper_pocket, []);
   assert.deepEqual(bg.created, ["chrome-extension://pepper-test-id/onboarding.html"]);
 });
 

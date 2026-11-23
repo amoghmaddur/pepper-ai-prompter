@@ -1,111 +1,89 @@
 # Pepper — The Personal AI Prompter
 
-**A Chrome and Edge extension that turns a few rough words into a clear, six-part prompt built only from what you've told it about yourself, then places it in the chat box of ChatGPT, Claude, Gemini, Perplexity or Copilot. You read it and press send. Pepper never sends anything for you.**
+**A small companion for Chrome, Brave and Edge that floats on your screen. It turns a few rough words into a clear, six-part prompt built from what you've told it about yourself, fixes your writing on any page, keeps your resume, files, links and details one click away, and fills job applications. Everything stays in your browser. Pepper never sends anything for you.**
 
-[![Unit tests](https://github.com/amoghmaddur/pepper-ai-prompter/actions/workflows/tests.yml/badge.svg)](https://github.com/amoghmaddur/pepper-ai-prompter/actions/workflows/tests.yml)
-![Manifest V3](https://img.shields.io/badge/Chrome%20%26%20Edge-Manifest%20V3-2E6B4A)
-![Permissions](https://img.shields.io/badge/permissions-storage%20only-2E6B4A)
+[![Tests](https://github.com/amoghmaddur/pepper-ai-prompter/actions/workflows/tests.yml/badge.svg)](https://github.com/amoghmaddur/pepper-ai-prompter/actions/workflows/tests.yml)
+![Manifest V3](https://img.shields.io/badge/Chrome%20%C2%B7%20Brave%20%C2%B7%20Edge-Manifest%20V3-2E6B4A)
 ![No server](https://img.shields.io/badge/backend-none-B5395F)
+![Version](https://img.shields.io/badge/version-0.4.0-2E6B4A)
 
-### [▶ Try the live playground](https://amoghmaddur.github.io/pepper-ai-prompter/) · [Watch the 2-minute demo (MP4)](demo/media/pepper-demo.mp4)
-
-![Pepper writing a six-part prompt on ChatGPT, inserting it, and learning from a rating](demo/media/pepper-demo.gif)
-
-<sub>Recorded with Playwright driving the real extension in Microsoft Edge, on local mock pages with a mocked model reply. The script is [`demo/record/record-demo.js`](demo/record/record-demo.js).</sub>
-
----
-
-## The problem
-
-Most people type five words into an AI chat and get a generic answer back. The AI doesn't know who they are, what they're working on, or what a good answer looks like. Writing a strong prompt each time takes effort nobody spends.
-
-## What Pepper does
-
-| You type | Pepper writes |
-|---|---|
-| `write a cover letter for the Stripe new-grad SWE role` | **ROLE** a career coach and cover-letter writer · **CONTEXT** your role, goals, saved memories, project and resume · **TASK** the request, broken into steps · **CONSTRAINTS** your tone, length, audience and things to avoid · **OUTPUT FORMAT** how you like answers laid out · **SUCCESS CRITERIA** how to tell the answer is done |
+### [▶ Try the prompt engine in your browser](https://amoghmaddur.github.io/pepper-ai-prompter/) · [What's new in 0.4](CHANGELOG.md)
 
 <table>
 <tr>
-<td width="33%"><img src="demo/media/panel-template.png" alt="Pepper's panel showing a six-part prompt"></td>
-<td width="33%"><img src="demo/media/panel-assumptions.png" alt="Pepper listing what the model assumed, kept out of the prompt"></td>
-<td width="33%"><img src="demo/media/panel-learned.png" alt="Pepper preselecting the approach with the best ratings, with the reason shown"></td>
+<td width="25%"><img src="demo/media/v04-panel-write.png" alt="Write: a six-part prompt on ChatGPT"></td>
+<td width="25%"><img src="demo/media/v04-panel-fix.png" alt="Fix: selected text corrected offline"></td>
+<td width="25%"><img src="demo/media/v04-panel-pocket.png" alt="Pocket: details, resume, templates and links"></td>
+<td width="25%"><img src="demo/media/v04-panel-fill.png" alt="Fill: a job application's fields recognized"></td>
 </tr>
 <tr>
-<td><b>Six labelled parts</b>, from 15 profile answers, memories and project files. Works offline with an on-device template, or with your own Anthropic or OpenAI key.</td>
-<td><b>Assumptions held back.</b> Anything the model guessed about you is listed separately and never inserted until you confirm it.</td>
-<td><b>Learns what works.</b> After five ratings, Pepper starts on your best-rated approach for that kind of work and tells you why.</td>
+<td><b>Write.</b> A six-part prompt from your profile, in the AI's own box. Starts on the approach that fits how you think.</td>
+<td><b>Fix.</b> Select text anywhere. Spelling and spacing fixed offline; improve, shorten or get similar ideas with your model.</td>
+<td><b>Pocket.</b> Resume, files, links, templates and your details. Drag files onto any upload field.</td>
+<td><b>Fill.</b> Job forms filled from your details in one click. Only empty fields, never submitted.</td>
 </tr>
 </table>
 
-### Features
+## Install
 
-- **Five sites, one panel.** A draggable peppercorn (or `Alt+Shift+P`) opens Pepper on ChatGPT, Claude, Gemini, Perplexity and Copilot. The panel follows each site's light or dark theme.
-- **Every answer matters.** Each of the 15 profile questions has a defined, tested effect on the prompt (role, tone, audience, language, length tier and more).
-- **Six approaches:** Balanced, Clarify, Expert role, Constraints, Deeper and Leaner, plus one-click Shorter, Longer, More formal and More casual rewrites.
-- **Projects and files.** Attach a resume or notes to a project. File text travels as labelled data blocks within a per-file and per-prompt budget, and anything trimmed is marked.
-- **Learning you can see and reset.** Per kind of work, Pepper learns the approach, a target length from your 4–5 star prompts, and "worked well before" suggestions. With a key, it can offer facts you stated about yourself as memories. You confirm every one.
-- **Dashboard** with profile, memories, projects, saved prompts, searchable history, what Pepper learned, privacy controls and model settings.
+1. Download **`pepper-v0.4.0.zip`** from [Releases](https://github.com/amoghmaddur/pepper-ai-prompter/releases) and unzip it, or build it yourself with `node pepper-tests/tools/package.js`.
+2. Open `chrome://extensions` (`brave://extensions`, `edge://extensions`) and turn on **Developer mode**.
+3. Click **Load unpacked** and pick the unzipped **`pepper-v0.4.0`** folder, the one with `manifest.json` directly inside.
 
-## Engineering highlights
+> **"Manifest file is missing or unreadable"?** You picked a folder one level too high, such as the repository itself. Choose `pepper-v0.4.0` (or, in the repository, `pepper-extension`).
 
-- **Privacy by construction.** Everything is stored in `chrome.storage.local`. There's no Pepper server, account or analytics. The manifest asks for only `storage` and `unlimitedStorage`, plus host access to the two model providers. Learning is **off by default on every site**, with one switch per site. Turning it off mid-reply discards the pending record.
-- **Prompt-injection resistant.** File text is never mixed into Pepper's instructions. It goes in a `<file>` data block with a preamble, and fake closing tags are defused, so a file saying "ignore previous instructions" can't change the Role. Unit tests cover this for all six approaches.
-- **No invented facts.** The model must list facts it would need after an `===ASSUMPTIONS===` marker. The parser separates them, handles a missing or malformed marker with a visible warning, and only the prompt half can ever be inserted.
-- **No lost writes.** Every list write from every tab goes through one serialized queue in the service worker, which re-checks consent before saving anything from a web page and whitelists what content scripts may write. A control test reproduces the two-tab race without the queue and shows it losing records.
-- **Hardened UI.** The panel lives in a closed shadow root, so page scripts can't read it or the API key. Extension pages can't be framed (`frame-ancestors 'none'`), and messages from other extensions are ignored.
-- **Honest attribution.** A send counts as "written with Pepper" only within 10 minutes of an Insert and at ≥ 50% Levenshtein similarity, so unrelated sends can't skew learning.
-- **Safe upgrades.** A schema migration converts v0.2 data idempotently, keeping every record and reference. History is pruned to 90 days or 2,000 prompts.
+Pepper's setup opens: about two minutes, one question per screen. Its features unlock when you finish.
 
-```mermaid
-flowchart LR
-  subgraph Tab["AI site tab"]
-    CS["content.js<br/>panel (closed shadow root) · insert · send detection · reply capture"]
-  end
-  CS -- "whitelisted writes" --> BG["background.js<br/>serialized write queue · consent re-check · model calls"]
-  BG --> ST[("chrome.storage.local")]
-  BG -- "only with your key" --> API["api.anthropic.com / api.openai.com"]
-  DB["dashboard · onboarding · popup"] --> BG
-  CORE["lib/core.js — pure, shared logic:<br/>template · parser · consent · learning · migration"]
-  CORE -.-> CS & BG & DB
-```
+## What it does
+
+- **Setup that shapes everything.** What to call you, what you do, which AI sites you use (in order), what you use AI for, how you like answers, your tone, when you do your best work, where Pepper floats, and which features you want, each with a preview.
+- **It leans the way you think.** "Walk me through it" starts prompts on Clarify, "Get to the point" on Leaner. Your first-pick AI is where prompts from other pages go. Once you've rated 5 replies, Pepper starts on your best-rated approach and tells you why.
+- **Floats where you want.** Only on the five AI sites, or everywhere (your browser asks once). Alt+Shift+P, the toolbar button or the right-click menu calls it on any page. Hide it on any site.
+- **A character, not a button.** The peppercorn blinks, follows your pointer, smiles when something worked, and goes wherever you drag it.
+- **Write anywhere, send to your AI.** On ChatGPT, Claude, Gemini, Perplexity or Copilot, Insert puts the prompt in the box. On any other page, Pepper opens your AI with the prompt in the box, optionally with the page as source material. You press send.
+- **Assumptions held back.** With your own model key, anything the model guessed about you is listed separately and stays out of the prompt until you confirm it.
+- **Focus nudges.** An optional notification when your best hours start, with your goal and your AI one click away.
+
+## Built with care
+
+- **Your data stays here.** Everything lives in `chrome.storage.local`. No Pepper server, account or analytics. Every-site access and notifications are *optional* permissions, requested only when you turn those on.
+- **Never acts for you.** Pepper never presses send, never submits a form, fills only empty fields, and refuses to store or fill passwords, card numbers and ID numbers.
+- **Injection-resistant.** File and page text travel as labelled data blocks, never as instructions, and fake closing tags are defused, so "ignore previous instructions" in a resume can't change the prompt's Role.
+- **Pages can't steer it.** The panel lives in a closed shadow root. Web pages may only make a short whitelist of writes (links and text to the Pocket, history where you allowed learning); prompt hand-offs can only be claimed by the tab Pepper opened, on the right site.
+- **No lost writes.** Every list write goes through one serialized queue in the service worker; a control test shows the same race losing records without it.
+- **Consent per site, off by default.** Learning records only on AI sites you turn it on for, and turning it off mid-reply discards the pending record.
 
 ## Tested
 
-| Suite | What runs | Result |
+| | What | Result |
 |---|---|---|
-| Unit (`node --test`) | 75 tests on `lib/core.js` and the real `background.js` inside a fake Chrome whose storage adds random delays, so concurrency bugs are real | **75 / 75 pass** |
-| Browser (Playwright) | 20 checks with the extension loaded in a real browser, driving mock pages for all five sites: insert without sending, clipboard fallback, reply capture, consent gates, the closed shadow root, framing, data controls and learning | **20 / 20 pass** on Microsoft Edge 154, and on Chromium in CI |
+| Unit | 129 tests: prompt engine, autofill matching, quick fixes, reminders, the Pocket, onboarding rules, the real worker in a fake Chrome with racing storage, page wiring, the privacy notice, the package | **129 / 129** |
+| Browser | 35 checks with the extension loaded: onboarding, every tool, insert without sending, hand-offs, drag and attach, form filling, consent gates, closed shadow root, data controls | **35 / 35 in Chromium 153, Brave 157 and Edge 154** |
+| Live sites | Logged out, 2026-11-22: Pepper appears, opens and inserts into the real box, nothing sent | **Gemini ✓, Perplexity ✓**. ChatGPT and Claude show bot checks to automated browsers; Copilot asks for sign-in |
 
 ```bash
-cd pepper-tests && npm test                    # unit tests, no install needed
+cd pepper-tests
+npm test                                   # unit tests, no install needed
 npm install && npx playwright install chromium
-npm run test:browser                           # browser checks (PEPPER_CHANNEL=msedge to use Edge)
+npm run test:browser                       # PEPPER_BROWSER=brave or msedge to switch
+node e2e/live-check.js                     # the real sites, logged out; never sends
 ```
-
-## Install
-
-1. Download this repository (**Code → Download ZIP**) and unzip it.
-2. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
-3. Click **Load unpacked** and choose the `pepper-extension` folder.
-4. The welcome page opens. Choose where Pepper may learn, optionally add a model key, and answer three questions. Then open any of the five sites and click the green peppercorn.
 
 ## Repository layout
 
 | Path | What's there |
 |---|---|
-| [`pepper-extension/`](pepper-extension) | The extension: `manifest.json`, `background.js`, `content.js`, `lib/core.js`, dashboard, onboarding, popup, [privacy notice](pepper-extension/PRIVACY.md) and its own [README](pepper-extension/README.md) |
-| [`pepper-tests/`](pepper-tests) | Unit tests, the fake Chrome, Playwright browser tests and mock sites |
-| [`demo/`](demo) | The [live playground](https://amoghmaddur.github.io/pepper-ai-prompter/) (runs the real `core.js` in the browser), the demo video and its recording script |
-| [`docs/`](docs) | Live-site test protocol and user interview guide |
-| [`CHANGES.md`](CHANGES.md) | What changed from v0.2 to v0.3, with the evidence for each item |
+| [`pepper-extension/`](pepper-extension) | The extension: `manifest.json`, `background.js`, `content.js` (the floating companion), `lib/core.js` (prompt engine), `lib/assist.js` (autofill, fixes, reminders, Pocket), the onboarding, dashboard and popup pages, and the [privacy notice](pepper-extension/PRIVACY.md) |
+| [`pepper-tests/`](pepper-tests) | Unit and browser tests, mock sites, the live check, and tools to build the package and the privacy page |
+| [`demo/`](demo) | The [web playground](https://amoghmaddur.github.io/pepper-ai-prompter/) that runs the real prompt engine, and the walkthrough video |
+| [`docs/`](docs) | Live-site test protocol, interview guide, and the v0.3 report |
 
 ## Honest limits
 
-- Site selectors are tested against local mock pages only. AI sites change their markup often, so [`docs/LIVE-TEST-PROTOCOL.md`](docs/LIVE-TEST-PROTOCOL.md) covers checking them on the live sites.
-- **Copilot works in Chrome but not in Edge.** Since Edge 150, Microsoft blocks every third-party extension on `copilot.microsoft.com`, and no policy overrides it.
-- PDF and Word files aren't parsed; paste their text into a project.
-- The privacy notice is a draft that still needs legal review.
+- AI sites redesign often. Gemini and Perplexity were checked live; ChatGPT and Claude were checked on faithful mock pages, because they block automated browsers. Please try them in your own browser.
+- Microsoft Edge blocks all extensions on Copilot by design; Copilot works in Chrome and Brave.
+- PDF text isn't read (Word files are); paste a PDF's text into its Pocket entry if prompts should use it.
+- Branded Google Chrome can't be driven by test automation with an extension loaded, so the automated runs use Chromium, the open-source build Chrome is made from.
 
 ---
 

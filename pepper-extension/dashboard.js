@@ -1,84 +1,103 @@
-/* Pepper — The Personal AI Prompter · dashboard (M9). No network of its own;
+/* Pepper — The Personal AI Prompter · dashboard (v0.4). No network of its own;
    model calls go through the worker. Every list write goes through the
-   worker's serialized queue, so a content tab writing at the same moment
-   can't be overwritten. */
-const C = window.PepperCore;
+   worker's serialized queue, so a tab writing at the same moment can't be
+   overwritten. Opens onboarding instead while setup isn't finished. */
+const C = window.PepperCore, A = window.PepperAssist;
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = (op) => chrome.runtime.sendMessage({ type: "STORE", op });
 const when = (iso) => { try { return new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }); } catch (e) { return ""; } };
 const siteName = (host) => (C.siteForHost(host) || { name: String(host || "").replace(/^www\./, "") }).name;
-const MAX_FILE_TEXT = 200000;
+const flashSaved = (id) => { $(id).textContent = "Saved"; setTimeout(() => { $(id).textContent = ""; }, 1400); };
 
 let D = {};
 async function load() {
-  const s = await chrome.storage.local.get(null);
+  const s = await chrome.storage.local.get(["pepper_settings", "pepper_profile", "pepper_memories", "pepper_projects", "pepper_pocket", "pepper_details",
+    "pepper_saved_prompts", "pepper_history", "pepper_consent", "pepper_learning", "pepper_active_project", "pepper_reminders", "pepper_ui"]);
   D = {
     settings: { enabled: true, minChars: 6, provider: "none", apiKey: "", model: "", ...(s.pepper_settings || {}) },
     profile: s.pepper_profile || { answers: {}, completed: false },
-    memories: s.pepper_memories || [], projects: s.pepper_projects || [], files: s.pepper_files || [],
+    memories: s.pepper_memories || [], projects: s.pepper_projects || [], pocket: s.pepper_pocket || [], details: s.pepper_details || {},
     saved: s.pepper_saved_prompts || [],
     // newest first by time, whatever order storage holds
     history: (s.pepper_history || []).slice().sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || ""))),
     consent: { ...C.defaultConsent(), ...(s.pepper_consent || {}) },
     learning: s.pepper_learning || { types: {}, dismissedFacts: [] },
-    activeProjectId: s.pepper_active_project ?? null
+    activeProjectId: s.pepper_active_project ?? null,
+    reminders: s.pepper_reminders || [], ui: s.pepper_ui || {}
   };
+  D.features = { ...A.defaultFeatures(), ...(D.settings.features || {}) };
 }
+const answers = () => D.profile.answers || {};
 const hasKey = () => D.settings.provider !== "none" && !!D.settings.apiKey;
-const answeredCount = () => Object.keys(D.profile.answers || {}).length;
 const consentCount = () => C.SITES.filter(s => D.consent[s.id] && D.consent[s.id].learning).length;
+const files = () => D.pocket.filter(i => i.kind === "file");
+const setFeature = (id, on) => store({ op: "objPatch", key: "pepper_settings", patch: { features: { ...D.features, [id]: on } } });
 
 /* ---------------- routing ---------------- */
-const SECTIONS = ["home", "about", "memories", "projects", "saved", "history", "learned", "privacy", "settings"];
+const SECTIONS = ["home", "you", "pocket", "projects", "history", "reminders", "settings"];
+// Old links from v0.3 still land somewhere sensible.
+const ALIASES = { about: "you", memories: "you", saved: "history", learned: "history", privacy: "settings" };
 let current = "home";
 function route() {
-  const h = (location.hash || "#home").slice(1);
+  let h = (location.hash || "#home").slice(1);
+  h = ALIASES[h] || h;
   current = SECTIONS.includes(h) ? h : "home";
   document.querySelectorAll("[data-section]").forEach(s => s.hidden = s.dataset.section !== current);
   document.querySelectorAll("#nav a").forEach(a => { if (a.dataset.s === current) a.setAttribute("aria-current", "page"); else a.removeAttribute("aria-current"); });
+  if (location.hash === "#learned") showHist("learned");
+  if (location.hash === "#saved") showHist("saved");
   render(current);
   window.scrollTo(0, 0);
 }
 window.addEventListener("hashchange", route);
-
 function render(name) {
   renderChrome();
-  ({ home: renderHome, about: renderAbout, memories: renderMemories, projects: renderProjects, saved: renderSaved,
-    history: renderHistory, learned: renderLearned, privacy: renderPrivacy, settings: renderSettings })[name]();
+  ({ home: renderHome, you: renderYou, pocket: renderPocket, projects: renderProjects, history: renderHistoryAll,
+    reminders: renderReminders, settings: renderSettings })[name]();
 }
 function renderChrome() {
   const on = D.settings.enabled !== false;
   $("masterSwitch").checked = on;
   $("masterLabel").textContent = on ? "Pepper is on" : "Pepper is off";
-  $("masterHelp").textContent = on ? "Shows Pepper on the five AI sites." : "Hidden everywhere. Nothing is recorded.";
-  $("navAbout").textContent = `${answeredCount()}/15`;
+  $("masterHelp").textContent = !on ? "Hidden everywhere. Nothing is recorded." : D.settings.floating === "everywhere" ? "Floating on every site." : "Floating on the five AI sites.";
+  $("navPocket").textContent = D.pocket.length ? String(D.pocket.length) : "";
 }
 $("masterSwitch").onchange = async (e) => { await store({ op: "objPatch", key: "pepper_settings", patch: { enabled: e.target.checked } }); };
 
 /* ---------------- HOME ---------------- */
 function renderHome() {
-  const n = answeredCount();
-  const projWithFile = D.projects.some(p => (p.fileIds || []).some(id => D.files.find(f => String(f.id) === String(id) && f.text)));
+  const a = answers();
+  const who = A.firstName(a, D.details);
+  $("hello").textContent = `${A.greeting(new Date().getHours())}${who ? ", " + who : ""}`;
+  const focus = A.FOCUS.find(f => f.id === a.focus);
+  const goal = (a.q10 || "").trim();
+  $("helloLede").textContent = [goal ? `Working toward: ${goal}.` : "", focus && focus.time ? `Your focus time is ${focus.label.toLowerCase()}.` : ""].filter(Boolean).join(" ") || "Pepper is ready when you are.";
+  const fav = A.favorites(a);
+  $("quickrow").innerHTML = fav.slice(0, 3).map((s, i) => `<a class="btn ${i ? "" : "primary"}" href="${s.url}" target="_blank" rel="noopener">Open ${esc(s.name)}</a>`).join("") +
+    `<a class="btn" href="#pocket">Open your Pocket</a>`;
+  const resume = A.pickResume(D.pocket);
+  const detailsN = A.DETAIL_IDS.filter(id => A.detailValue(id, D.details)).length;
   const items = [
-    { done: n >= 10, title: "Tell Pepper about you", desc: `${n} of 15 questions answered. Each one changes your prompts.`, href: "#about", cta: n ? "Keep going" : "Answer questions" },
-    { done: projWithFile, title: "Create a project and attach your resume or notes", desc: "Pepper treats a project's files as the source of truth.", href: "#projects", cta: "Add a project" },
-    { done: consentCount() > 0, title: "Turn learning on for the sites you use", desc: consentCount() ? `On for ${consentCount()} of 5 sites.` : "Off everywhere. Pepper can't learn what works for you yet.", href: "#privacy", cta: "Choose sites" },
-    { done: hasKey(), title: "Add your model key", desc: "Optional. Your own model writes much fuller prompts than the built-in template.", href: "#settings", cta: "Add key" },
-    { done: D.history.some(h => h.assisted) || D.saved.length > 0, title: "Write your first prompt", desc: "Open ChatGPT, Claude, Gemini, Perplexity or Copilot and click the green peppercorn in the corner, or press Alt+Shift+P.", href: null }
-  ];
+    { done: !!resume, title: "Put your resume in your Pocket", desc: "Drag it onto job sites from the floating Pepper, or let Pepper attach it.", href: "#pocket", cta: "Add resume" },
+    D.features.autofill ? { done: detailsN >= 4, title: "Add the details you type on every application", desc: `${detailsN} saved. Pepper fills them in when you click Fill.`, href: "#pocket", cta: "Add details", hash: "details" } : null,
+    { done: consentCount() > 0, title: "Let Pepper learn what works for you", desc: consentCount() ? `On for ${consentCount()} of 5 sites.` : "Off everywhere, so Pepper can't learn which approach you like.", href: "#settings", cta: "Choose sites" },
+    { done: hasKey(), title: "Add your model key", desc: "Optional. Your own model writes fuller prompts and does full rewrites in the Fix tab.", href: "#settings", cta: "Add key" },
+    { done: D.features.reminders && D.reminders.some(r => r.enabled), title: "Get a nudge at your focus time", desc: "A notification when your best hours start.", href: "#reminders", cta: "Set it up" },
+    { done: D.history.some(h => h.assisted) || D.saved.length > 0, title: `Write your first prompt on ${fav[0].name}`, desc: "Click the peppercorn in the corner, or press Alt+Shift+P.", href: null }
+  ].filter(Boolean);
   $("checklist").innerHTML = items.map((it, i) => `<li class="${it.done ? "done" : ""}">
     <span class="tick" aria-hidden="true">${it.done ? "✓" : i + 1}</span>
     <div><b>${esc(it.title)}</b><p>${esc(it.desc)}</p></div>
-    ${it.href && !it.done ? `<a class="btn sm" href="${it.href}">${esc(it.cta)}</a>` : `<span class="small muted">${it.done ? "Done" : ""}</span>`}
+    ${it.href && !it.done ? `<a class="btn sm" href="${it.href}" ${it.hash ? `data-sub="${it.hash}"` : ""}>${esc(it.cta)}</a>` : `<span class="small muted">${it.done ? "Done" : ""}</span>`}
   </li>`).join("");
-
+  $("checklist").querySelectorAll("[data-sub]").forEach(l => l.onclick = () => setTimeout(() => showPocket(l.dataset.sub), 0));
   const h = D.history;
   if (!h.length) {
     $("figures").innerHTML = `<div class="wide"><dd>Figures appear once you send prompts on a site with learning on.</dd></div>`;
   } else {
     const rated = h.filter(r => r.rating != null);
-    const avg = rated.length ? (rated.reduce((a, b) => a + b.rating, 0) / rated.length).toFixed(1) : "—";
+    const avg = rated.length ? (rated.reduce((x, y) => x + y.rating, 0) / rated.length).toFixed(1) : "—";
     const learned = Object.values(D.learning.types || {}).filter(t => t.lens && t.lens !== "auto").length;
     $("figures").innerHTML = `
       <div><dt>${C.assistedShare(h)}%</dt><dd>of the ${h.length} prompts you sent went through Pepper</dd></div>
@@ -90,63 +109,77 @@ function renderHome() {
   bindRecRows($("recent"));
 }
 
-/* ---------------- ABOUT YOU ---------------- */
+/* ---------------- YOU ---------------- */
+// The first group is what onboarding asked; required answers can be changed but not emptied.
 const GROUPS = [
-  { title: "You", ids: ["q3", "q4", "q2", "q10", "q12"] },
-  { title: "How you like answers", ids: ["q6", "q5", "q8", "q9", "q14", "q13"] },
-  { title: "How Pepper works for you", ids: ["q15", "q7", "q11", "q1"] }
+  { title: "The basics", ids: ["name", "q3", "q4", "q1", "q2", "q5", "q6", "focus"] },
+  { title: "How you like answers", ids: ["q8", "q9", "q14", "q13", "q12"] },
+  { title: "How Pepper works for you", ids: ["q10", "q11", "q15", "q7"] }
 ];
-let aboutTimer = null;
-function renderAbout() {
-  const a = D.profile.answers || {};
+const EXTRA_Q = {
+  name: { id: "name", t: "What should Pepper call you?", type: "text", ph: "Your first name", effect: "Used to greet you and in templates as {{name}}. Not added to prompts." },
+  focus: { id: "focus", t: "When do you do your best work?", type: "single", opts: A.FOCUS.map(f => f.id), labels: Object.fromEntries(A.FOCUS.map(f => [f.id, `${f.label} (${f.hint})`])), effect: "Sets your focus reminder." }
+};
+function question(id) {
+  if (EXTRA_Q[id]) return EXTRA_Q[id];
+  const q = C.QUESTIONS.find(x => x.id === id);
+  if (id === "q1") return { ...q, t: "Which AI sites do you use? (in order)", opts: A.AI_SITES.map(s => s.name), effect: "Your first pick is where Pepper sends prompts from other pages." };
+  if (id === "q5") return { ...q, labels: Object.fromEntries(A.THINK.map(t => [t.value, t.label])) };
+  return q;
+}
+let youTimer = null;
+function renderYou() {
+  const a = answers();
   $("quiz").innerHTML = GROUPS.map(g => `<div class="qgroup"><h2>${esc(g.title)}</h2>${g.ids.map(id => {
-    const q = C.QUESTIONS.find(x => x.id === id);
-    const has = a[id] != null && (!Array.isArray(a[id]) || a[id].length);
+    const q = question(id);
+    const has = a[id] != null && (!Array.isArray(a[id]) || a[id].length) && a[id] !== "";
+    const req = A.REQUIRED.includes(id);
     let body;
     if (q.type === "text") body = `<input type="text" data-q="${q.id}" value="${esc(a[q.id] || "")}" placeholder="${esc(q.ph || "")}" aria-label="${esc(q.t)}">`;
     else {
       const cur = q.type === "multi" ? (Array.isArray(a[q.id]) ? a[q.id] : []) : (a[q.id] ? [a[q.id]] : []);
       body = `<div class="opts" data-q="${q.id}" data-type="${q.type}" role="group" aria-label="${esc(q.t)}">${q.opts.map(o =>
-        `<button type="button" class="opt" data-o="${esc(o)}" aria-pressed="${cur.includes(o)}">${esc(o)}</button>`).join("")}</div>`;
+        `<button type="button" class="opt" data-o="${esc(o)}" aria-pressed="${cur.includes(o)}">${q.id === "q1" && cur.includes(o) ? `<b class="ord">${cur.indexOf(o) + 1}</b> ` : ""}${esc((q.labels && q.labels[o]) || o)}</button>`).join("")}</div>`;
     }
-    return `<div class="q ${has ? "answered" : ""}" data-qrow="${q.id}"><div class="q-t">${esc(q.t)}</div>${body}<div class="q-e">${esc(q.effect)}</div></div>`;
+    return `<div class="q ${has ? "answered" : ""}" data-qrow="${q.id}"><div class="q-t">${esc(q.t)}${req ? ' <span class="req">required</span>' : ""}</div>${body}<div class="q-e">${esc(q.effect)}</div></div>`;
   }).join("")}</div>`).join("");
   $("quiz").querySelectorAll(".opts").forEach(group => group.querySelectorAll(".opt").forEach(b => b.onclick = () => {
-    const single = group.dataset.type === "single";
-    const on = b.getAttribute("aria-pressed") === "true";
-    if (single) group.querySelectorAll(".opt").forEach(x => x.setAttribute("aria-pressed", "false"));
-    b.setAttribute("aria-pressed", String(!on));
-    saveAbout();
+    const id = group.dataset.q, o = b.dataset.o;
+    const cur = { ...answers() };
+    if (group.dataset.type === "single") cur[id] = cur[id] === o && !A.REQUIRED.includes(id) ? "" : o;
+    else { const list = Array.isArray(cur[id]) ? cur[id] : []; cur[id] = list.includes(o) ? list.filter(x => x !== o) : [...list, o]; }
+    saveYou(cur, true);
   }));
-  $("quiz").querySelectorAll("input[data-q]").forEach(i => i.oninput = () => { clearTimeout(aboutTimer); aboutTimer = setTimeout(saveAbout, 500); });
-  updateAboutProgress();
-}
-function collectAnswers() {
-  const answers = {};
-  $("quiz").querySelectorAll("input[data-q]").forEach(i => { if (i.value.trim()) answers[i.dataset.q] = i.value.trim(); });
-  $("quiz").querySelectorAll(".opts").forEach(g => {
-    const chosen = [...g.querySelectorAll('.opt[aria-pressed="true"]')].map(o => o.dataset.o);
-    if (g.dataset.type === "single") { if (chosen[0]) answers[g.dataset.q] = chosen[0]; }
-    else if (chosen.length) answers[g.dataset.q] = chosen;
+  $("quiz").querySelectorAll("input[data-q]").forEach(i => i.oninput = () => {
+    clearTimeout(youTimer);
+    youTimer = setTimeout(() => { const cur = { ...answers() }; cur[i.dataset.q] = i.value.trim(); saveYou(cur, false); }, 500);
   });
-  return answers;
+  renderMemories();
+  updateYouProgress();
 }
-async function saveAbout() {
-  const answers = collectAnswers();
-  D.profile = { answers, completed: Object.keys(answers).length >= 10 };
+async function saveYou(next, rerender) {
+  const miss = A.REQUIRED.filter(k => !(Array.isArray(next[k]) ? next[k].length : String(next[k] || "").trim()));
+  if (miss.length) {
+    $("aboutSaved").className = "small bad";
+    $("aboutSaved").textContent = "That one's required, so Pepper kept your earlier answer.";
+    setTimeout(() => { $("aboutSaved").className = "saved"; $("aboutSaved").textContent = ""; }, 2600);
+    if (rerender) renderYou();
+    return;
+  }
+  D.profile = { ...D.profile, answers: next };
   await store({ op: "set", key: "pepper_profile", value: D.profile });
-  $("aboutSaved").textContent = "Saved";
-  setTimeout(() => $("aboutSaved").textContent = "", 1400);
-  $("quiz").querySelectorAll("[data-qrow]").forEach(r => r.classList.toggle("answered", answers[r.dataset.qrow] != null));
-  updateAboutProgress(); renderChrome();
+  // Focus time drives the focus reminder.
+  const f = A.focusReminder(next), had = D.reminders.find(r => r.id === "focus");
+  if (f && (!had || had.time !== f.time)) await saveReminders([{ ...f, enabled: had ? had.enabled : false, days: had ? had.days : f.days }, ...D.reminders.filter(r => r.id !== "focus")]);
+  $("aboutSaved").className = "saved"; flashSaved("aboutSaved");
+  if (rerender) renderYou(); else { $("quiz").querySelectorAll("[data-qrow]").forEach(r => { const v = next[r.dataset.qrow]; r.classList.toggle("answered", Array.isArray(v) ? v.length > 0 : !!v); }); updateYouProgress(); }
 }
-function updateAboutProgress() {
-  const n = answeredCount();
-  $("aboutCount").textContent = `${n} of 15 answered`;
-  $("aboutBar").style.width = (n / 15 * 100) + "%";
+function updateYouProgress() {
+  const all = GROUPS.flatMap(g => g.ids), a = answers();
+  const n = all.filter(id => Array.isArray(a[id]) ? a[id].length : !!a[id]).length;
+  $("aboutCount").textContent = `${n} of ${all.length} answered`;
+  $("aboutBar").style.width = (n / all.length * 100) + "%";
 }
-
-/* ---------------- MEMORIES ---------------- */
 function renderMemories() {
   const list = $("memList");
   list.innerHTML = D.memories.length ? `<div class="rows">${D.memories.map(m => `
@@ -154,16 +187,15 @@ function renderMemories() {
       <label class="switch" title="${m.active ? "On: added to every prompt" : "Off: not used"}"><input type="checkbox" ${m.active ? "checked" : ""} aria-label="Use this memory"><i></i></label>
       <input type="text" value="${esc(m.text)}" aria-label="Memory text">
       <button class="btn sm danger" data-del>Delete</button>
-    </div>`).join("")}</div>` : `<div class="empty">No memories yet. Add one above, or let Pepper suggest some from your prompts below.</div>`;
+    </div>`).join("")}</div>` : `<div class="empty">No memories yet. Add one above, or let Pepper suggest some from your prompts.</div>`;
   list.querySelectorAll(".mem").forEach(row => {
     const id = row.dataset.id;
     row.querySelector(".switch input").onchange = (e) => store({ op: "listPatch", key: "pepper_memories", id, patch: { active: e.target.checked } });
     row.querySelector('input[type=text]').onchange = (e) => { const t = e.target.value.trim(); if (t) store({ op: "listPatch", key: "pepper_memories", id, patch: { text: t } }); };
     row.querySelector("[data-del]").onclick = () => store({ op: "listRemove", key: "pepper_memories", id });
   });
-  const hist = D.history.length;
-  $("factsBtn").disabled = !hasKey() || !hist;
-  $("factsNote").textContent = !hasKey() ? "Needs a model key (Model and settings)." : !hist ? "Needs prompts in your history first." : "";
+  $("factsBtn").disabled = !hasKey() || !D.history.length;
+  $("factsNote").textContent = !hasKey() ? "Needs a model key (Settings)." : !D.history.length ? "Needs prompts in your history first." : "";
 }
 $("memForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -194,7 +226,150 @@ $("factsBtn").onclick = async () => {
   });
 };
 
-/* ---------------- PROJECTS + FILES ---------------- */
+/* ---------------- POCKET ---------------- */
+let pocketTab = "files";
+function showPocket(t) {
+  pocketTab = t;
+  document.querySelectorAll("#pocketNav button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.p === t)));
+  document.querySelectorAll("[data-pocket]").forEach(s => s.hidden = s.dataset.pocket !== t);
+  renderPocket();
+}
+document.querySelectorAll("#pocketNav button").forEach(b => b.onclick = () => showPocket(b.dataset.p));
+function renderPocket() {
+  const used = A.pocketUsage(D.pocket);
+  $("pocketUse").textContent = `${D.pocket.length} item${D.pocket.length === 1 ? "" : "s"} · ${A.formatBytes(used)} of ${A.formatBytes(A.POCKET_LIMITS.total)}`;
+  $("pocketBar").style.width = Math.min(100, used / A.POCKET_LIMITS.total * 100) + "%";
+  if (pocketTab === "files") renderFiles();
+  if (pocketTab === "links") renderLinks();
+  if (pocketTab === "snippets") renderSnippets();
+  if (pocketTab === "details") renderDetails();
+}
+const drop = $("drop"), fileInput = $("fileInput");
+$("pick").onclick = () => fileInput.click();
+fileInput.onchange = () => { handleFiles(fileInput.files); fileInput.value = ""; };
+["dragover", "dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
+async function handleFiles(list) {
+  let n = 0;
+  for (const f of [...list]) {
+    const why = A.pocketRejects(D.pocket, f.size);
+    if (why) { $("dropNote").className = "small bad"; $("dropNote").textContent = why; continue; }
+    $("dropNote").className = "small"; $("dropNote").textContent = `Adding ${f.name}…`;
+    const buf = await f.arrayBuffer();
+    const text = A.isTextLike(f.name, f.type) ? new TextDecoder().decode(buf).slice(0, 200000) : /\.docx$/i.test(f.name) ? await A.extractDocxText(buf) : "";
+    const r = await chrome.runtime.sendMessage({ type: "POCKET_ADD_FILE", item: { name: f.name, mime: f.type, text, role: A.isResumeLabel(f.name) && !A.pickResume(D.pocket) ? "resume" : undefined }, data: A.bytesToBase64(new Uint8Array(buf)) });
+    if (r && r.ok) { n++; D.pocket = [r.item, ...D.pocket]; } else { $("dropNote").className = "small bad"; $("dropNote").textContent = (r && r.error) || `Couldn't add ${f.name}.`; }
+  }
+  if (n) { $("dropNote").className = "small saved"; $("dropNote").textContent = `Added ${n} file${n === 1 ? "" : "s"}.`; }
+}
+function renderFiles() {
+  const fl = files();
+  $("fileList").innerHTML = fl.length ? `<div class="rows">${fl.map(f => {
+    const k = A.fileKind(f.name, f.mime);
+    return `<div class="row" data-id="${esc(f.id)}">
+      <div class="row-h"><span class="fk ${k}">${esc(k === "other" ? "file" : k)}</span><div class="grow"><b>${esc(f.name)}</b>
+        <p class="small muted">${A.formatBytes(f.size)}${f.text ? ` · ${f.text.length.toLocaleString()} characters of text for prompts` : f.hasBlob ? " · no text for prompts yet" : ""}${f.addedAt ? " · added " + when(f.addedAt) : ""}</p></div>
+        ${f.role === "resume" ? `<span class="tag corn">Resume</span>` : `<button class="btn sm" data-role>Mark as resume</button>`}
+        ${f.hasBlob ? `<button class="btn sm" data-dl>Download</button>` : ""}
+        <button class="btn sm danger" data-del>Delete</button></div>
+      ${f.text ? `<details><summary class="small link">Text Pepper can use in prompts</summary><div class="prev text">${esc(f.text.slice(0, 1500))}${f.text.length > 1500 ? "…" : ""}</div></details>`
+        : `<details ${f.needsText ? "open" : ""}><summary class="small link">Add its text so prompts can use it</summary><div class="paste"><textarea rows="4" placeholder="Pepper can't read PDFs. Paste the text here, for example your resume's."></textarea><div><button class="btn sm primary" data-save>Save text</button></div></div></details>`}
+    </div>`;
+  }).join("")}</div>` : `<div class="empty">No files yet. Your resume is a good first one.</div>`;
+  $("fileList").querySelectorAll(".row").forEach(row => {
+    const id = row.dataset.id, f = D.pocket.find(x => String(x.id) === id);
+    row.querySelector("[data-del]").onclick = async () => { if (confirm(`Delete ${f.name} from your Pocket?`)) await chrome.runtime.sendMessage({ type: "POCKET_REMOVE", id }); };
+    const role = row.querySelector("[data-role]");
+    if (role) role.onclick = async () => {
+      for (const x of files()) if (x.role === "resume") await store({ op: "listPatch", key: "pepper_pocket", id: x.id, patch: { role: null } });
+      await store({ op: "listPatch", key: "pepper_pocket", id, patch: { role: "resume" } });
+    };
+    const dl = row.querySelector("[data-dl]");
+    if (dl) dl.onclick = async () => {
+      const k = A.blobKey(id), b64 = (await chrome.storage.local.get(k))[k];
+      if (!b64) return;
+      const url = URL.createObjectURL(new Blob([A.base64ToBytes(b64)], { type: f.mime }));
+      const a = document.createElement("a"); a.href = url; a.download = f.name; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    };
+    const sv = row.querySelector("[data-save]");
+    if (sv) sv.onclick = () => { const t = row.querySelector("textarea").value; if (t.trim()) store({ op: "listPatch", key: "pepper_pocket", id, patch: { text: t.slice(0, 200000), needsText: false } }); };
+  });
+}
+$("linkForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const url = A.normalizeUrl($("linkUrl").value);
+  if (!url) { $("linkUrl").focus(); return; }
+  await store({ op: "listAdd", key: "pepper_pocket", item: { id: C.uuid(), kind: "link", url, title: $("linkTitle").value.trim() || url, addedAt: new Date().toISOString() } });
+  $("linkUrl").value = ""; $("linkTitle").value = "";
+};
+function renderLinks() {
+  const ls = D.pocket.filter(i => i.kind === "link");
+  $("linkList").innerHTML = ls.length ? `<div class="rows">${ls.map(l => `<div class="row row-h" data-id="${esc(l.id)}">
+    <div class="grow"><input type="text" class="bare" value="${esc(l.title || "")}" aria-label="Link name"><p class="small muted"><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.url)}</a></p></div>
+    <button class="btn sm danger" data-del>Delete</button></div>`).join("")}</div>` : `<div class="empty">No links yet. Save sites you visit a lot: your portfolio, a job tracker, a course page. Right-click any page to save it too.</div>`;
+  $("linkList").querySelectorAll(".row").forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector("input").onchange = (e) => store({ op: "listPatch", key: "pepper_pocket", id, patch: { title: e.target.value.trim() } });
+    row.querySelector("[data-del]").onclick = () => chrome.runtime.sendMessage({ type: "POCKET_REMOVE", id });
+  });
+}
+function renderSnippets() {
+  const vars = A.templateVars(answers(), D.details);
+  $("snipVars").textContent = "Fill-ins you can use: " + Object.keys(vars).map(k => `{{${k}}}`).join(" ");
+  const ss = D.pocket.filter(i => i.kind === "snippet");
+  $("snipList").innerHTML = ss.length ? `<div class="rows">${ss.map(s => {
+    const f = A.fillTemplate(s.text, vars);
+    return `<div class="row" data-id="${esc(s.id)}"><div class="row-h"><div class="grow"><input type="text" class="bare" value="${esc(s.title || "")}" aria-label="Template name"></div><button class="btn sm danger" data-del>Delete</button></div>
+      <textarea rows="3" aria-label="Template text">${esc(s.text)}</textarea>
+      <p class="small muted">Preview: ${esc(f.text.slice(0, 220))}${f.missing.length ? ` <span class="bad">(not in your details yet: ${esc(f.missing.join(", "))})</span>` : ""}</p></div>`;
+  }).join("")}</div>` : `<div class="empty">No templates yet. Save things you write over and over: an intro, a follow-up, a sign-off.</div>`;
+  $("snipList").querySelectorAll(".row").forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector("input").onchange = (e) => store({ op: "listPatch", key: "pepper_pocket", id, patch: { title: e.target.value.trim() } });
+    row.querySelector("textarea").onchange = (e) => store({ op: "listPatch", key: "pepper_pocket", id, patch: { text: e.target.value } });
+    row.querySelector("[data-del]").onclick = () => chrome.runtime.sendMessage({ type: "POCKET_REMOVE", id });
+  });
+}
+$("snipForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("snipText").value.trim(); if (!text) { $("snipText").focus(); return; }
+  await store({ op: "listAdd", key: "pepper_pocket", item: { id: C.uuid(), kind: "snippet", title: $("snipTitle").value.trim() || text.slice(0, 50), text, addedAt: new Date().toISOString() } });
+  $("snipText").value = ""; $("snipTitle").value = "";
+};
+let detTimer = null;
+function renderDetails() {
+  const d = D.details;
+  $("detailsForm").innerHTML = A.DETAILS.map(x => `<label class="field"><span>${esc(x.label)}</span><input type="text" data-d="${x.id}" value="${esc(d[x.id] || "")}" autocomplete="off"></label>`).join("");
+  $("detailsForm").querySelectorAll("input[data-d]").forEach(i => i.oninput = () => { clearTimeout(detTimer); detTimer = setTimeout(saveDetails, 500); });
+  const custom = Array.isArray(d.custom) ? d.custom : [];
+  $("customList").innerHTML = custom.length ? `<div class="rows">${custom.map((c, i) => `<div class="row row-h"><div class="grow"><b>${esc(c.label)}</b><p class="small muted">${esc(c.value)}</p></div><button class="btn sm danger" data-i="${i}">Delete</button></div>`).join("")}</div>` : "";
+  $("customList").querySelectorAll("[data-i]").forEach(b => b.onclick = () => { const next = custom.filter((_, i) => i !== +b.dataset.i); store({ op: "set", key: "pepper_details", value: { ...collectDetails(), custom: next } }); });
+}
+function collectDetails() {
+  const out = { custom: Array.isArray(D.details.custom) ? D.details.custom : [] };
+  $("detailsForm").querySelectorAll("input[data-d]").forEach(i => { const v = i.value.trim(); if (v) out[i.dataset.d] = v; });
+  return out;
+}
+async function saveDetails() {
+  const next = collectDetails();
+  if (Object.values(next).some(v => typeof v === "string" && A.looksLikeCard(v))) { $("detailsSaved").className = "small bad"; $("detailsSaved").textContent = "That looks like a card number, so it wasn't saved."; return; }
+  D.details = next;
+  await store({ op: "set", key: "pepper_details", value: next });
+  $("detailsSaved").className = "saved"; flashSaved("detailsSaved");
+}
+$("customForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const label = $("customLabel").value.trim(), value = $("customValue").value.trim();
+  if (!label || !value) return;
+  if (A.sensitiveLabel(label) || A.looksLikeCard(value)) { $("customNote").textContent = "Pepper doesn't keep passwords, payment details or ID numbers."; return; }
+  $("customNote").textContent = "";
+  await store({ op: "set", key: "pepper_details", value: { ...collectDetails(), custom: [...(D.details.custom || []), { label, value }] } });
+  $("customLabel").value = ""; $("customValue").value = "";
+};
+
+/* ---------------- PROJECTS ---------------- */
 $("pType").innerHTML = C.PROJECT_TYPES.map(t => `<option>${esc(t)}</option>`).join("");
 $("projForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -206,10 +381,11 @@ $("projForm").onsubmit = async (e) => {
 };
 function renderProjects() {
   if (!D.projects.length) $("projCreate").open = true;
+  const fl = files();
   $("projList").innerHTML = D.projects.length ? `<div class="rows">${D.projects.map(p => {
     const active = String(p.id) === String(D.activeProjectId);
-    const chips = D.files.length ? D.files.map(f => `<button type="button" class="fchip" data-f="${esc(f.id)}" aria-pressed="${(p.fileIds || []).map(String).includes(String(f.id))}">${esc(f.name)}</button>`).join("")
-      : `<span class="small muted">Add files below, then attach them here.</span>`;
+    const chips = fl.length ? fl.map(f => `<button type="button" class="fchip" data-f="${esc(f.id)}" aria-pressed="${(p.fileIds || []).map(String).includes(String(f.id))}" title="${f.text ? "" : "Add this file's text in the Pocket so prompts can use it"}">${esc(f.name)}${f.text ? "" : " ·  no text"}</button>`).join("")
+      : `<span class="small muted">Add files to your Pocket, then attach them here.</span>`;
     return `<div class="row proj ${active ? "active" : ""}" data-id="${esc(p.id)}">
       <div class="row-h"><div class="grow"><h3>${esc(p.name)}</h3><p class="desc">${esc(p.description || "")}</p></div>
         <span class="tag">${esc(p.type)}</span>
@@ -229,70 +405,28 @@ function renderProjects() {
     });
     const act = row.querySelector("[data-act]"); if (act) act.onclick = () => store({ op: "set", key: "pepper_active_project", value: id });
     row.querySelector("[data-del]").onclick = async () => {
-      if (!confirm(`Delete the project "${p.name}"? Its files stay in your library.`)) return;
+      if (!confirm(`Delete the project "${p.name}"? Its files stay in your Pocket.`)) return;
       await store({ op: "listRemove", key: "pepper_projects", id });
       if (String(D.activeProjectId) === id) await store({ op: "set", key: "pepper_active_project", value: null });
     };
   });
-  renderFiles();
-}
-const drop = $("drop"), fileInput = $("fileInput");
-$("pick").onclick = () => fileInput.click();
-fileInput.onchange = () => { handleFiles(fileInput.files); fileInput.value = ""; };
-["dragover", "dragenter"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
-["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
-drop.addEventListener("drop", e => handleFiles(e.dataTransfer.files));
-const isTextLike = (f) => /\.(txt|md|markdown|csv|tsv|json|js|ts|jsx|tsx|py|java|c|cpp|cs|go|rb|php|html|css|xml|ya?ml|log|sql|sh|rtf|tex)$/i.test(f.name) || (f.type || "").startsWith("text");
-async function handleFiles(list) {
-  for (const f of list) {
-    const rec = { id: C.uuid(), name: f.name, type: f.type || "", size: f.size, text: "", needsPaste: false, addedAt: new Date().toISOString() };
-    if (isTextLike(f)) rec.text = (await f.text()).slice(0, MAX_FILE_TEXT); else rec.needsPaste = true;
-    await store({ op: "listAdd", key: "pepper_files", end: true, item: rec });
-  }
-}
-function renderFiles() {
-  $("fileList").innerHTML = D.files.length ? `<div class="rows">${D.files.map(f => `<div class="row" data-id="${esc(f.id)}">
-    <div class="row-h"><div class="grow"><b>${esc(f.name)}</b>
-      <p class="small muted">${(f.size / 1024).toFixed(1)} KB, ${f.text ? f.text.length.toLocaleString() + " characters" + (f.text.length > C.FILE_BUDGET ? ` (Pepper uses the first ${C.FILE_BUDGET.toLocaleString()})` : "") : "no text yet"}</p></div>
-      <button class="btn sm danger" data-del>Delete</button></div>
-    ${f.text ? `<details><summary class="small link">Preview</summary><div class="prev text">${esc(f.text.slice(0, 1200))}${f.text.length > 1200 ? "…" : ""}</div></details>`
-      : `<div class="paste"><textarea rows="4" placeholder="Pepper can't read this file type. Paste its text here, for example your resume."></textarea><div><button class="btn sm primary" data-save>Save text</button></div></div>`}
-  </div>`).join("")}</div>` : `<div class="empty">No files yet. Your resume is a good first one.</div>`;
-  $("fileList").querySelectorAll(".row").forEach(row => {
-    const id = row.dataset.id;
-    row.querySelector("[data-del]").onclick = async () => {
-      await store({ op: "listRemove", key: "pepper_files", id });
-      for (const p of D.projects) if ((p.fileIds || []).map(String).includes(id))
-        await store({ op: "listPatch", key: "pepper_projects", id: p.id, patch: { fileIds: p.fileIds.filter(x => String(x) !== id) } });
-    };
-    const sv = row.querySelector("[data-save]");
-    if (sv) sv.onclick = () => { const t = row.querySelector("textarea").value; if (t.trim()) store({ op: "listPatch", key: "pepper_files", id, patch: { text: t.slice(0, MAX_FILE_TEXT), needsPaste: false } }); };
-  });
 }
 
-/* ---------------- SAVED ---------------- */
-$("savedSearch").oninput = () => renderSaved();
-function renderSaved() {
-  const q = $("savedSearch").value.toLowerCase();
-  const items = D.saved.filter(s => !q || (s.text + " " + (s.title || "")).toLowerCase().includes(q));
-  $("savedList").innerHTML = items.length ? `<div class="rows">${items.map(s => {
-    const proj = D.projects.find(p => String(p.id) === String(s.projectId));
-    const title = s.title || s.text.split("\n").find(l => l.trim() && !C.SECTIONS.includes(l.trim().toUpperCase())) || "Saved prompt";
-    return `<div class="row rec" data-id="${esc(s.id)}">
-      <div class="row-h"><div class="grow"><b>${esc(title)}</b></div>${proj ? `<span class="tag">${esc(proj.name)}</span>` : ""}<span class="when">${when(s.createdAt)}</span></div>
-      <details><summary>Show prompt (${C.words(s.text)} words)</summary><div class="prompt text serif">${esc(s.text)}</div></details>
-      <div class="foot"><span></span><span><button class="btn sm" data-copy>Copy</button> <button class="btn sm danger" data-del>Delete</button></span></div>
-    </div>`;
-  }).join("")}</div>` : `<div class="empty">${q ? "No saved prompts match." : "Nothing saved yet. After Pepper writes a prompt, click Save in the panel."}</div>`;
-  $("savedList").querySelectorAll(".rec").forEach(row => {
-    const s = D.saved.find(x => String(x.id) === row.dataset.id);
-    row.querySelector("[data-copy]").onclick = async (e) => { await navigator.clipboard.writeText(s.text); e.target.textContent = "Copied"; setTimeout(() => e.target.textContent = "Copy", 1200); };
-    row.querySelector("[data-del]").onclick = () => store({ op: "listRemove", key: "pepper_saved_prompts", id: s.id });
-  });
+/* ---------------- HISTORY (sent, learned, saved) ---------------- */
+let histTab = "sent", histLimit = 50;
+function showHist(t) {
+  histTab = t;
+  document.querySelectorAll("#histNav button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.h === t)));
+  document.querySelectorAll("[data-hist]").forEach(s => s.hidden = s.dataset.hist !== t);
+  renderHistoryAll();
 }
-
-/* ---------------- HISTORY ---------------- */
-let histLimit = 50;
+document.querySelectorAll("#histNav button").forEach(b => b.onclick = () => showHist(b.dataset.h));
+function renderHistoryAll() {
+  $("histCount").textContent = D.history.length ? String(D.history.length) : "";
+  if (histTab === "sent") renderHistory();
+  if (histTab === "learned") renderLearned();
+  if (histTab === "saved") renderSaved();
+}
 $("histSearch").oninput = () => { histLimit = 50; renderHistory(); };
 $("histSite").onchange = () => { histLimit = 50; renderHistory(); };
 $("histKind").onchange = () => { histLimit = 50; renderHistory(); };
@@ -328,16 +462,14 @@ function renderHistory() {
     && (!site || siteName(h.site) === site) && (!kind || (kind === "assisted" ? h.assisted : h.rating == null)));
   $("histList").innerHTML = items.length ? `<div class="rows">${items.slice(0, histLimit).map(recRow).join("")}</div>
     ${items.length > histLimit ? `<p style="margin-top:12px"><button class="btn" id="more">Show more (${items.length - histLimit} left)</button></p>` : ""}`
-    : `<div class="empty">${D.history.length ? "No prompts match." : (consentCount() ? "Nothing yet. Send a prompt on a site with learning on." : "Learning is off on every site, so nothing is recorded.")}${!consentCount() ? `<br><a class="btn sm" href="#privacy">Turn on learning</a>` : ""}</div>`;
+    : `<div class="empty">${D.history.length ? "No prompts match." : (consentCount() ? "Nothing yet. Send a prompt on a site with learning on." : "Learning is off on every site, so nothing is recorded.")}${!consentCount() ? `<br><a class="btn sm" href="#settings">Turn on learning</a>` : ""}</div>`;
   bindRecRows($("histList"));
   const m = $("more"); if (m) m.onclick = () => { histLimit += 50; renderHistory(); };
 }
-
-/* ---------------- WHAT PEPPER LEARNED ---------------- */
 function renderLearned() {
   const on = consentCount();
-  $("learnStatus").innerHTML = on ? `<div class="notice pepper">Learning is on for ${on} of 5 sites. <a href="#privacy">Change</a></div>`
-    : `<div class="notice warn">Learning is off on every site, so Pepper can't learn anything yet. <a href="#privacy">Turn it on</a></div>`;
+  $("learnStatus").innerHTML = on ? `<div class="notice pepper">Learning is on for ${on} of 5 sites. <a href="#settings">Change</a></div>`
+    : `<div class="notice warn">Learning is off on every site, so Pepper can't learn anything yet. <a href="#settings">Turn it on</a></div>`;
   const types = Object.entries(D.learning.types || {}).filter(([, t]) => t.total > 0 || t.resetAt);
   $("learnTypes").innerHTML = types.length ? `<div class="rows">${types.map(([T, t]) => {
     const head = t.lens && t.lens !== "auto"
@@ -355,80 +487,177 @@ function renderLearned() {
     </div>`;
   }).join("")}</div>` : `<div class="empty">Nothing learned yet. Send prompts through Pepper on a site with learning on and rate the replies. After ${C.MIN_RATINGS} ratings for one kind of work, Pepper starts picking the approach that scored best.</div>`;
   $("learnTypes").querySelectorAll("[data-reset]").forEach(b => b.onclick = async () => {
-    if (!confirm(`Reset what Pepper learned for ${b.dataset.reset}? Your history stays; Pepper goes back to Balanced and counts only new ratings.`)) return;
+    if (!confirm(`Reset what Pepper learned for ${b.dataset.reset}? Your history stays; Pepper goes back to its starting approach and counts only new ratings.`)) return;
     await chrome.runtime.sendMessage({ type: "LEARNING_RESET", projectType: b.dataset.reset });
   });
   const lift = C.ratingLift(D.history, D.learning);
-  $("liftBlock").innerHTML = lift.afterN ? `<h2>Since Pepper started choosing</h2>
-    <p>Prompts written after Pepper picked your approach average <b>${lift.after} stars</b> (${lift.afterN}), against <b>${lift.before ?? "—"}</b> before (${lift.beforeN}).</p>` : "";
+  $("liftBlock").innerHTML = lift.afterN ? `<div class="block"><h2>Since Pepper started choosing</h2>
+    <p>Prompts written after Pepper picked your approach average <b>${lift.after} stars</b> (${lift.afterN}), against <b>${lift.before ?? "—"}</b> before (${lift.beforeN}).</p></div>` : "";
   const best = D.history.filter(h => h.assisted && h.rating >= 4 && h.raw).sort((a, b) => b.rating - a.rating).slice(0, 8);
   $("bestList").innerHTML = best.length ? `<div class="rows">${best.map(h => `<div class="row row-h"><div class="grow">${esc(h.raw)}</div><span class="tag corn">${h.rating}★</span><span class="tag">${esc(h.projectType || "General")}</span></div>`).join("")}</div>`
     : `<div class="empty">None yet.</div>`;
 }
+$("savedSearch").oninput = () => renderSaved();
+function renderSaved() {
+  const q = $("savedSearch").value.toLowerCase();
+  const items = D.saved.filter(s => !q || (s.text + " " + (s.title || "")).toLowerCase().includes(q));
+  $("savedList").innerHTML = items.length ? `<div class="rows">${items.map(s => {
+    const proj = D.projects.find(p => String(p.id) === String(s.projectId));
+    const title = s.title || s.text.split("\n").find(l => l.trim() && !C.SECTIONS.includes(l.trim().toUpperCase())) || "Saved prompt";
+    return `<div class="row rec" data-id="${esc(s.id)}">
+      <div class="row-h"><div class="grow"><b>${esc(title)}</b></div>${proj ? `<span class="tag">${esc(proj.name)}</span>` : ""}<span class="when">${when(s.createdAt)}</span></div>
+      <details><summary>Show prompt (${C.words(s.text)} words)</summary><div class="prompt text serif">${esc(s.text)}</div></details>
+      <div class="foot"><span></span><span><button class="btn sm" data-copy>Copy</button> <button class="btn sm danger" data-del>Delete</button></span></div>
+    </div>`;
+  }).join("")}</div>` : `<div class="empty">${q ? "No saved prompts match." : "Nothing saved yet. After Pepper writes a prompt, click Save in the panel."}</div>`;
+  $("savedList").querySelectorAll(".rec").forEach(row => {
+    const s = D.saved.find(x => String(x.id) === row.dataset.id);
+    row.querySelector("[data-copy]").onclick = async (e) => { await navigator.clipboard.writeText(s.text); e.target.textContent = "Copied"; setTimeout(() => e.target.textContent = "Copy", 1200); };
+    row.querySelector("[data-del]").onclick = () => store({ op: "listRemove", key: "pepper_saved_prompts", id: s.id });
+  });
+}
 
-/* ---------------- PRIVACY ---------------- */
-function renderPrivacy() {
+/* ---------------- REMINDERS ---------------- */
+const DAYS = ["S", "M", "T", "W", "T", "F", "S"];
+const saveReminders = (items) => store({ op: "listSet", key: "pepper_reminders", items });
+async function renderReminders() {
+  const perm = await chrome.permissions.contains({ permissions: ["notifications"] });
+  const on = D.features.reminders;
+  $("remStatus").className = "notice " + (on && perm ? "pepper" : "warn");
+  $("remStatus").innerHTML = on && perm ? `Reminders are on. <button class="link" id="remOff">Turn them off</button>`
+    : `Reminders are off${on && !perm ? " because your browser hasn't allowed notifications" : ""}. <button class="btn sm primary" id="remOn">Turn on reminders</button>`;
+  const onBtn = $("remOn"), offBtn = $("remOff");
+  if (onBtn) onBtn.onclick = async () => {
+    const ok = await chrome.permissions.request({ permissions: ["notifications"] }).catch(() => false);
+    if (!ok) { $("remNote").textContent = "Your browser didn't allow notifications."; return; }
+    await setFeature("reminders", true);
+    if (!D.reminders.length) { const f = A.focusReminder(answers()); if (f) await saveReminders([f]); }
+  };
+  if (offBtn) offBtn.onclick = () => setFeature("reminders", false);
+  $("remList").innerHTML = D.reminders.length ? `<div class="rows">${D.reminders.map(r => {
+    const days = r.days && r.days.length ? r.days : [0, 1, 2, 3, 4, 5, 6];
+    return `<div class="row rem" data-id="${esc(r.id)}">
+      <label class="switch" title="On or off"><input type="checkbox" ${r.enabled !== false ? "checked" : ""} aria-label="Reminder on"><i></i></label>
+      <div class="grow"><input type="text" class="bare" value="${esc(r.text)}" aria-label="Reminder text">
+        <div class="days">${DAYS.map((d, i) => `<button type="button" data-day="${i}" aria-pressed="${days.includes(i)}" aria-label="${["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][i]}">${d}</button>`).join("")}</div></div>
+      <input type="time" value="${esc(r.time)}" aria-label="Time">
+      ${r.id === "focus" ? `<span class="tag pepper">Focus</span>` : `<button class="btn sm danger" data-del>Delete</button>`}
+    </div>`;
+  }).join("")}</div>` : `<div class="empty">No reminders yet. Add one below.</div>`;
+  $("remList").querySelectorAll(".rem").forEach(row => {
+    const id = row.dataset.id;
+    const patch = (p) => saveReminders(D.reminders.map(r => String(r.id) === id ? { ...r, ...p } : r));
+    row.querySelector(".switch input").onchange = (e) => patch({ enabled: e.target.checked });
+    row.querySelector("input.bare").onchange = (e) => patch({ text: e.target.value.trim() || "Time to focus." });
+    row.querySelector('input[type="time"]').onchange = (e) => { if (A.parseTime(e.target.value)) patch({ time: e.target.value }); };
+    row.querySelectorAll("[data-day]").forEach(b => b.onclick = () => {
+      const r = D.reminders.find(x => String(x.id) === id);
+      const set = new Set(r.days && r.days.length ? r.days : [0, 1, 2, 3, 4, 5, 6]);
+      const d = +b.dataset.day; set.has(d) ? set.delete(d) : set.add(d);
+      if (!set.size) return;
+      patch({ days: [...set].sort() });
+    });
+    const del = row.querySelector("[data-del]"); if (del) del.onclick = () => saveReminders(D.reminders.filter(r => String(r.id) !== id));
+  });
+}
+$("remForm").onsubmit = async (e) => {
+  e.preventDefault();
+  const text = $("remText").value.trim(), time = $("remTime").value;
+  if (!text || !A.parseTime(time)) return;
+  await saveReminders([...D.reminders, { id: C.uuid(), kind: "custom", text, time, days: [1, 2, 3, 4, 5], enabled: true }]);
+  $("remText").value = "";
+  if (!D.features.reminders) $("remNote").textContent = "Saved. Turn reminders on above so it can fire.";
+};
+$("remTest").onclick = async () => {
+  const r = await chrome.runtime.sendMessage({ type: "REMINDER_TEST" });
+  $("remNote").textContent = r && r.ok ? "Sent. Check your notifications." : "Turn reminders on first, and allow notifications.";
+};
+
+/* ---------------- SETTINGS ---------------- */
+function renderSettings() {
+  document.querySelectorAll('#floatChoice input').forEach(r => { r.checked = r.value === (D.settings.floating || "ai"); });
+  $("floatNote").textContent = D.settings.floatingLost ? "The all-sites permission was removed, so Pepper went back to AI sites only." : "";
+  const hidden = Object.entries(D.ui || {}).filter(([, v]) => v && v.hidden).map(([k]) => k);
+  $("hiddenSites").innerHTML = hidden.length ? `<p class="small muted">Hidden on: ${hidden.map(h => `<span class="tag">${esc(h)} <button class="link" data-show="${esc(h)}">show</button></span>`).join(" ")}</p>` : "";
+  $("hiddenSites").querySelectorAll("[data-show]").forEach(b => b.onclick = () => store({ op: "objPatch", key: "pepper_ui", patch: { [b.dataset.show]: { ...(D.ui[b.dataset.show] || {}), hidden: false } } }));
+  const rows = A.FEATURES.map(f => ({ id: f.id, label: f.label, line: f.line, on: !!D.features[f.id] }))
+    .concat([{ id: "selectionButton", label: "Selection button", line: "Show a small Fix · Ask AI button when you select text (needs the writing helper).", on: D.settings.selectionButton !== false }]);
+  $("featureRows").innerHTML = rows.map(r => `<div class="row consent"><div><b>${esc(r.label)}</b><p class="small muted">${esc(r.line)}</p></div>
+    <label class="switch"><input type="checkbox" data-feature="${r.id}" ${r.on ? "checked" : ""} aria-label="${esc(r.label)}"><i></i></label></div>`).join("");
+  $("featureRows").querySelectorAll("input[data-feature]").forEach(i => i.onchange = async () => {
+    const id = i.dataset.feature;
+    if (id === "selectionButton") return store({ op: "objPatch", key: "pepper_settings", patch: { selectionButton: i.checked } });
+    if (id === "reminders" && i.checked && !(await chrome.permissions.request({ permissions: ["notifications"] }).catch(() => false))) { i.checked = false; return; }
+    setFeature(id, i.checked);
+  });
   $("consentRows").innerHTML = C.SITES.map(s => {
     const on = !!(D.consent[s.id] && D.consent[s.id].learning);
     return `<div class="row consent"><div><b>${esc(s.name)}</b><p class="small muted">${s.hosts.join(", ")}: ${on ? "saving prompts, replies and ratings" : "writing prompts only, nothing saved"}</p></div>
       <label class="switch corn"><input type="checkbox" data-site="${s.id}" ${on ? "checked" : ""} aria-label="Learning on ${esc(s.name)}"><i></i></label></div>`;
   }).join("");
   $("consentRows").querySelectorAll("input[data-site]").forEach(i => i.onchange = () => setConsent({ [i.dataset.site]: { learning: i.checked } }));
-  $("histCount").textContent = `${D.history.length} prompts recorded. Your ratings and what Pepper learned from them go too.`;
-  $("keyState").textContent = hasKey() ? `A ${D.settings.provider === "anthropic" ? "Anthropic" : "OpenAI"} key is stored in this browser.` : "No key stored.";
-  $("removeKey").disabled = !D.settings.apiKey;
-}
-const setConsent = (patch) => store({ op: "objPatch", key: "pepper_consent", patch });
-$("allOn").onclick = () => { const p = {}; C.SITES.forEach(s => p[s.id] = { learning: true }); setConsent(p); };
-$("allOff").onclick = () => { const p = {}; C.SITES.forEach(s => p[s.id] = { learning: false }); setConsent(p); };
-$("export").onclick = async () => {
-  const s = await chrome.storage.local.get(null);
-  delete s.pepper_settings; // settings hold the key: never exported
-  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), product: C.PRODUCT, ...s }, null, 2)], { type: "application/json" });
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "pepper-data.json"; a.click();
-  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-};
-$("clearHist").onclick = async () => {
-  if (!confirm("Delete all recorded prompts, replies and ratings? Profile, memories, projects, files and saved prompts are kept.")) return;
-  await store({ op: "listSet", key: "pepper_history", items: [] });
-};
-$("removeKey").onclick = async () => { if (confirm("Remove your API key from this browser?")) await store({ op: "objPatch", key: "pepper_settings", patch: { apiKey: "", provider: "none" } }); };
-$("wipe").onclick = async () => {
-  if (!confirm("Delete everything Pepper has stored in this browser, including your API key? This can't be undone.")) return;
-  await chrome.runtime.sendMessage({ type: "WIPE" });
-};
-
-/* ---------------- SETTINGS ---------------- */
-function renderSettings() {
   $("sProvider").value = D.settings.provider || "none";
   $("sKey").value = D.settings.apiKey || "";
   $("sModel").value = D.settings.model || "";
   $("sMin").value = D.settings.minChars || 6;
   syncModelHelp();
+  $("histCount2").textContent = `${D.history.length} prompts recorded. Your ratings and what Pepper learned from them go too.`;
+  $("keyState").textContent = hasKey() ? `A ${D.settings.provider === "anthropic" ? "Anthropic" : "OpenAI"} key is stored in this browser.` : "No key stored.";
+  $("removeKey").disabled = !D.settings.apiKey;
 }
+document.querySelectorAll('#floatChoice input').forEach(r => r.onchange = async () => {
+  if (r.value === "everywhere") {
+    const ok = await chrome.permissions.request({ origins: ["<all_urls>"] }).catch(() => false);
+    if (!ok) { $("floatNote").textContent = "Your browser didn't allow it, so Pepper stays on AI sites."; renderSettings(); return; }
+  }
+  await store({ op: "objPatch", key: "pepper_settings", patch: { floating: r.value, floatingLost: false } });
+  const s = await chrome.runtime.sendMessage({ type: "SYNC" });
+  $("floatNote").textContent = r.value === "everywhere" ? (s && s.floating ? "Pepper now floats on every page, including the tabs you have open." : "Saved.") : "Pepper floats on AI sites only.";
+});
+const setConsent = (patch) => store({ op: "objPatch", key: "pepper_consent", patch });
+$("allOn").onclick = () => { const p = {}; C.SITES.forEach(s => p[s.id] = { learning: true }); setConsent(p); };
+$("allOff").onclick = () => { const p = {}; C.SITES.forEach(s => p[s.id] = { learning: false }); setConsent(p); };
 function syncModelHelp() {
   const p = $("sProvider").value;
   const def = C.DEFAULT_MODELS[p];
   $("sModel").placeholder = def || "";
   $("sModel").disabled = $("sKey").disabled = p === "none";
   $("testKey").disabled = p === "none";
-  $("modelHelp").textContent = def ? `Leave blank to use ${def}. Check your provider's model list if it fails.` : "Not needed for the built-in template.";
+  $("modelHelp").textContent = def ? `Leave blank to use ${def}. Check your provider's model list if it fails.` : "Not needed for the built-in writer.";
 }
 $("sProvider").onchange = syncModelHelp;
 $("showKey").onclick = () => { const k = $("sKey"); k.type = k.type === "password" ? "text" : "password"; $("showKey").textContent = k.type === "password" ? "Show" : "Hide"; };
-$("shortcuts").onclick = () => chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
+$("shortcuts").onclick = () => chrome.tabs.create({ url: navigator.userAgent.includes("Edg/") ? "edge://extensions/shortcuts" : "chrome://extensions/shortcuts" });
 async function saveSettings() {
   await store({ op: "objPatch", key: "pepper_settings", patch: {
-    provider: $("sProvider").value, apiKey: $("sKey").value.trim(), model: $("sModel").value.trim(),
+    provider: $("sProvider").value, apiKey: $("sProvider").value === "none" ? "" : $("sKey").value.trim(), model: $("sModel").value.trim(),
     minChars: Math.max(2, Math.min(40, +$("sMin").value || 6)) } });
 }
-$("settingsForm").onsubmit = async (e) => { e.preventDefault(); await saveSettings(); $("settingsSaved").textContent = "Saved"; setTimeout(() => $("settingsSaved").textContent = "", 1500); };
+$("settingsForm").onsubmit = async (e) => { e.preventDefault(); await saveSettings(); flashSaved("settingsSaved"); };
 $("testKey").onclick = async () => {
   await saveSettings();
   $("testNote").className = "small"; $("testNote").textContent = "Testing…";
   const r = await chrome.runtime.sendMessage({ type: "LLM", system: "Reply with the single word OK.", user: "ping", maxTokens: 16 });
   if (r && r.ok) { $("testNote").className = "small ok"; $("testNote").textContent = `Connected to ${r.model}. Settings saved.`; }
   else { $("testNote").className = "small bad"; $("testNote").textContent = r && r.error === "NO_KEY" ? "Add a key first." : "Your provider returned: " + ((r && r.error) || "no reply"); }
+};
+$("export").onclick = async () => {
+  const s = await chrome.storage.local.get(null);
+  delete s.pepper_settings; // settings hold the key: never exported
+  for (const k of Object.keys(s)) if (k.startsWith("pepper_blob_")) delete s[k]; // file contents stay out; download them from the Pocket
+  const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), product: C.PRODUCT, ...s }, null, 2)], { type: "application/json" });
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "pepper-data.json"; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+$("clearHist").onclick = async () => {
+  if (!confirm("Delete all recorded prompts, replies and ratings? Your profile, Pocket, memories, projects and saved prompts are kept.")) return;
+  await store({ op: "listSet", key: "pepper_history", items: [] });
+};
+$("removeKey").onclick = async () => { if (confirm("Remove your API key from this browser?")) await store({ op: "objPatch", key: "pepper_settings", patch: { apiKey: "", provider: "none" } }); };
+$("wipe").onclick = async () => {
+  if (!confirm("Delete everything Pepper has stored in this browser, including your Pocket and API key? This can't be undone.")) return;
+  await chrome.runtime.sendMessage({ type: "WIPE" });
+  location.href = "onboarding.html";
 };
 
 /* ---------------- live updates ---------------- */
@@ -438,12 +667,16 @@ chrome.storage.onChanged.addListener((ch, area) => {
   clearTimeout(reTimer);
   reTimer = setTimeout(async () => {
     await load();
+    if (!A.setupComplete(D.profile, D.settings)) { location.replace("onboarding.html"); return; }
     // Don't re-render a form while the user is typing in it.
-    const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest("#quiz, #settingsForm, #memForm, #projForm, .paste, .fact");
-    if (typing && (current === "about" || current === "settings")) { renderChrome(); return; }
-    if (current === "about") { renderChrome(); return; }
+    const typing = document.activeElement && document.activeElement.closest && document.activeElement.closest("#quiz, #settingsForm, #memForm, #projForm, .paste, .fact, #detailsForm, #customForm, #linkForm, #snipForm, #snipList, #remList, #remForm, #linkList");
+    if (typing) { renderChrome(); return; }
     render(current);
   }, 120);
 });
 
-(async function init() { await load(); route(); })();
+(async function init() {
+  await load();
+  if (!A.setupComplete(D.profile, D.settings)) { location.replace("onboarding.html"); return; }
+  route();
+})();

@@ -98,6 +98,44 @@ details.create[open]>summary{margin-bottom:14px}
 .settings{display:flex;flex-direction:column;gap:20px;max-width:520px}
 .keyrow{display:flex;gap:8px}
 
+
+/* v0.4: home */
+.hello h1{font-size:34px}
+.quickrow{display:flex;gap:10px;flex-wrap:wrap}
+/* sub-navigation inside Pocket and History */
+.subnav{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:8px}
+.subnav button{height:34px;padding:0 14px;border:0;border-radius:9px;background:none;font-weight:600;color:var(--muted)}
+.subnav button:hover{background:var(--sunk);color:var(--ink)}
+.subnav button[aria-pressed="true"]{background:var(--pepper-soft);color:var(--pepper)}
+.subnav .count{font-size:12px;font-weight:500;margin-left:4px}
+[data-pocket],[data-hist]{display:flex;flex-direction:column;gap:14px}
+[data-pocket][hidden],[data-hist][hidden]{display:none}
+/* pocket */
+.fk{display:inline-grid;place-items:center;min-width:52px;height:24px;padding:0 8px;border-radius:7px;background:var(--sunk);color:var(--muted);font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.fk.pdf{background:#FBE7E4;color:#A1271B}.fk.image{background:#EFE7FA;color:#6A3FA6}.fk.doc{background:#E4EEFB;color:#1F5FA8}.fk.text{background:var(--pepper-soft);color:var(--pepper)}
+@media (prefers-color-scheme:dark){.fk.pdf{background:#3A1F1C;color:#F2A59A}.fk.image{background:#2E2340;color:#C9B2F0}.fk.doc{background:#1D2C40;color:#9CC3F2}}
+input.bare{border-color:transparent;background:transparent;padding:4px 8px;margin-left:-8px;font-weight:600}
+input.bare:hover{border-color:var(--line)}
+.snipform{display:flex;flex-direction:column;gap:10px;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--surface)}
+#snipList textarea{margin-top:8px}
+.detgrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px 16px}
+/* you */
+.req{font-size:11px;font-weight:700;color:var(--corn);background:var(--corn-soft);border-radius:999px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+.opt .ord{display:inline-grid;place-items:center;width:18px;height:18px;border-radius:50%;background:var(--pepper);color:var(--pepper-ink);font-size:11px;margin-right:2px}
+/* reminders */
+.remform{display:grid;grid-template-columns:1fr 130px auto;gap:10px}
+.rem{display:grid;grid-template-columns:auto 1fr 120px auto;gap:14px;align-items:center}
+.days{display:flex;gap:4px;margin-top:6px}
+.days button{width:28px;height:28px;border-radius:50%;border:1px solid var(--line);background:var(--surface);font-size:12px;font-weight:700;color:var(--muted)}
+.days button[aria-pressed="true"]{background:var(--pepper);border-color:var(--pepper);color:var(--pepper-ink)}
+input[type=time]{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:8px 10px;font-size:14.5px;color:var(--ink)}
+/* settings */
+.choice{display:flex;flex-direction:column;gap:8px}
+.choice label{display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border:1px solid var(--line);border-radius:12px;background:var(--surface);cursor:pointer}
+.choice input{margin-top:4px;accent-color:var(--pepper)}
+.choice b{display:block}.choice small{color:var(--muted);font-size:13px}
+.notice .btn{margin-left:8px}
+
 @media (max-width:860px){
   .shell{grid-template-columns:minmax(0,1fr);background:none}
   .side,.main{min-width:0}
@@ -110,4 +148,6 @@ details.create[open]>summary{margin-bottom:14px}
   .figures div{border-left:0;border-top:1px solid var(--line)}
   .figures div:first-child{border-top:0}
   .projform{grid-template-columns:1fr}
+  .detgrid,.remform{grid-template-columns:minmax(0,1fr)}
+  .rem{grid-template-columns:auto 1fr}
 }

@@ -3,98 +3,131 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Welcome to Pepper — The Personal AI Prompter</title>
+<title>Set up Pepper — The Personal AI Prompter</title>
 <link rel="stylesheet" href="pages.css">
 <link rel="stylesheet" href="onboarding.css">
 </head>
 <body>
-<main class="wrap">
-  <header class="top">
-    <span class="corn-mark" aria-hidden="true"></span>
-    <span class="brandname">Pepper</span>
+<main class="ob">
+  <div class="bar" aria-hidden="true"><i id="bar"></i></div>
+  <header class="obh">
+    <button class="back" id="back" type="button" hidden>← Back</button>
+    <span class="stepno" id="stepNo"></span>
   </header>
 
-  <!-- Shown only after an update from v0.2 -->
-  <section class="update" id="update" hidden>
-    <h2>Pepper 0.3 records only where you say so</h2>
-    <p>Earlier versions saved your prompts and replies on every AI site without asking. That has stopped. Nothing new is recorded until you turn learning on for a site below.</p>
-    <p id="oldCount" class="muted"></p>
-    <div class="actions">
-      <button class="btn" id="keepOld">Keep them</button>
-      <button class="btn danger" id="dropOld">Delete them</button>
-      <span class="saved" id="oldDone" aria-live="polite"></span>
+  <div class="buddy" id="buddy" aria-hidden="true"></div>
+
+  <section class="step" data-step="welcome">
+    <p class="update" id="updateNote" hidden>Pepper 0.4 is here. Your history, projects and files are all kept. A few new questions, and your old answers are already filled in.</p>
+    <h1>Hi, I'm Pepper.</h1>
+    <p class="lede">I turn a few words into great prompts, fix your writing, keep your files handy and fill boring forms. Let's set me up so all of it fits you. It takes about two minutes.</p>
+    <ul class="peek">
+      <li><b>Write</b><span>Six-part prompts, in your voice</span></li>
+      <li><b>Fix</b><span>Select text anywhere, make it better</span></li>
+      <li><b>Pocket</b><span>Resume, links, details, one click away</span></li>
+      <li><b>Fill</b><span>Job applications in seconds</span></li>
+    </ul>
+  </section>
+
+  <section class="step" data-step="you" hidden>
+    <h1>First, who are you?</h1>
+    <label class="field big"><span>What should I call you?</span><input type="text" id="name" autocomplete="given-name" placeholder="Your first name" maxlength="60"></label>
+    <label class="field big"><span>What do you do?</span><input type="text" id="role" placeholder="e.g. CS grad student, product designer, nurse" maxlength="120"></label>
+    <p class="why">I use this to pick the right expert for your prompts and to greet you. It never leaves this browser unless you add a model key.</p>
+  </section>
+
+  <section class="step" data-step="sites" hidden>
+    <h1>Which AI do you use most?</h1>
+    <p class="lede">Tap them in order of how much you use them. Your first pick is where I send prompts from other pages.</p>
+    <div class="cards sites" id="sites"></div>
+  </section>
+
+  <section class="step" data-step="uses" hidden>
+    <h1>What do you use AI for?</h1>
+    <p class="lede">Pick up to three. I'll lead with the tools that match.</p>
+    <div class="chips" id="uses"></div>
+  </section>
+
+  <section class="step" data-step="style" hidden>
+    <h1>How do you like your answers?</h1>
+    <div class="cards two" id="think"></div>
+    <h2>And the tone?</h2>
+    <div class="chips" id="tone"></div>
+  </section>
+
+  <section class="step" data-step="focus" hidden>
+    <h1>When do you do your best work?</h1>
+    <p class="lede">I can give you a gentle nudge when that time starts, with your goal and your AI one click away.</p>
+    <div class="cards three" id="focus"></div>
+    <label class="toggle" id="nudgeRow"><input type="checkbox" id="nudge"><span><b>Nudge me then</b><small id="nudgeHelp">Uses your browser's notifications. You can change the time later.</small></span></label>
+  </section>
+
+  <section class="step" data-step="float" hidden>
+    <h1>Where should I float?</h1>
+    <p class="lede">I'm the little green peppercorn in the corner. Drag me anywhere; I remember the spot.</p>
+    <div class="cards two place" id="float">
+      <button type="button" class="card" data-v="ai"><span class="pv"><span class="win ai"><i></i><i></i><em class="pep-dot"></em></span><span class="win"><i></i><i></i></span></span>
+        <b>Only on AI sites</b><small>ChatGPT, Claude, Gemini, Perplexity and Copilot. Press Alt+Shift+P to call me anywhere else.</small></button>
+      <button type="button" class="card" data-v="everywhere"><span class="pv"><span class="win ai"><i></i><i></i><em class="pep-dot"></em></span><span class="win"><i></i><i></i><em class="pep-dot"></em></span></span>
+        <b>Keep floating everywhere</b><small>Always there to fix text, fill forms and drop files. Your browser will ask to allow me on all sites.</small></button>
     </div>
-    <p class="small muted">Kept records only count toward learning on sites where you turn learning on.</p>
+    <p class="why" id="floatNote"></p>
   </section>
 
-  <section class="intro">
-    <h1>Your rough prompt, written out properly.</h1>
-    <p class="lede">Type what you want in a few words. Pepper rewrites it into six clear parts using only what you've told it about yourself, then puts it in the chat box. You read it and press send.</p>
-
-    <figure class="recipe" aria-label="An example of what Pepper writes">
-      <div class="ask"><span class="muted small">You type</span><p>write a cover letter for the Stripe new-grad SWE role</p></div>
-      <ol class="parts">
-        <li><b>Role</b><span>An experienced tech recruiter who writes new-grad cover letters.</span></li>
-        <li><b>Context</b><span>I'm a master's student in computer science. From my resume: two internships in backend services.</span></li>
-        <li><b>Task</b><span>Write a cover letter for Stripe's new-grad software engineer role.</span></li>
-        <li><b>Constraints</b><span>Professional tone. No em dashes. Only facts from my resume.</span></li>
-        <li><b>Output format</b><span>Three short paragraphs, under 350 words.</span></li>
-        <li><b>Success criteria</b><span>A recruiter can see in ten seconds why I fit this role.</span></li>
-      </ol>
-      <figcaption class="check"><span class="pin" aria-hidden="true"></span><span><b>Pepper assumed:</b> you want to mention the payments project. Anything Pepper guesses is listed here for you to check. It never goes into the prompt unless you add it.</span></figcaption>
-    </figure>
+  <section class="step" data-step="powers" hidden>
+    <h1>Pick your superpowers</h1>
+    <p class="lede">These are what make me useful. Turn on the ones you want; you can change them any time.</p>
+    <div class="powers" id="powers"></div>
+    <label class="toggle"><input type="checkbox" id="learn"><span><b>Learn what works for me</b><small id="learnHelp">On your AI sites, I keep the prompts you send, the replies and your star ratings, in this browser, to pick the approach that gets your best results. Off unless you turn it on.</small></span></label>
   </section>
 
-  <ol class="steps">
-    <li class="step" id="step-learn">
-      <div class="step-h"><span class="num" aria-hidden="true">1</span><h2>Let Pepper learn what works for you</h2></div>
-      <p>With learning on for a site, Pepper saves the prompts you send there, the reply (up to 4,000 characters) and the stars you give it. It uses them to pick the approach that gets your best ratings, to aim for the length you like, to suggest prompts that worked before, and, if you add a model key, to offer facts about you to remember. Everything stays in this browser.</p>
-      <p class="muted small">Off by default. Prompt writing works either way. You can change this per site at any time.</p>
-      <div class="rows" id="consentRows"></div>
-      <div class="actions">
-        <button class="btn corn" id="allOn">Turn on for all five</button>
-        <button class="btn" id="allOff">Keep all off</button>
-      </div>
-    </li>
-
-    <li class="step" id="step-key">
-      <div class="step-h"><span class="num" aria-hidden="true">2</span><h2>Add your model key <span class="opt-tag">optional</span></h2></div>
-      <p>With your own Anthropic or OpenAI key, your model writes the prompt and it reads much better. Without one, Pepper uses a built-in template that works offline.</p>
-      <p class="muted small">When a key is set, what you type, your profile answers, active memories and the text of your project's files are sent to that provider to write the prompt. The key is stored only in this browser and sent only to that provider.</p>
-      <div class="keygrid">
-        <label class="field"><span>Provider</span>
-          <select id="provider"><option value="none">None (built-in template)</option><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
-        <label class="field"><span>API key</span><input type="password" id="key" autocomplete="off" spellcheck="false" placeholder="Paste your key"></label>
-      </div>
-      <div class="actions"><button class="btn" id="saveKey">Save and test</button><span class="small" id="keyNote" aria-live="polite"></span></div>
-    </li>
-
-    <li class="step" id="step-you">
-      <div class="step-h"><span class="num" aria-hidden="true">3</span><h2>Three things about you</h2></div>
-      <p>Each answer changes every prompt Pepper writes. There are twelve more in the dashboard.</p>
-      <div class="quick" id="quick"></div>
-      <span class="saved" id="quickSaved" aria-live="polite"></span>
-    </li>
-  </ol>
-
-  <section class="finish">
-    <button class="btn primary big" id="done">Start using Pepper</button>
-    <div class="ready" id="ready" hidden>
-      <h2>You're set.</h2>
-      <p>Open one of these and click the green peppercorn in the bottom corner, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>.</p>
-      <p class="sites">
-        <a href="https://chatgpt.com/" target="_blank" rel="noopener">ChatGPT</a>
-        <a href="https://claude.ai/" target="_blank" rel="noopener">Claude</a>
-        <a href="https://gemini.google.com/" target="_blank" rel="noopener">Gemini</a>
-        <a href="https://www.perplexity.ai/" target="_blank" rel="noopener">Perplexity</a>
-        <a href="https://copilot.microsoft.com/" target="_blank" rel="noopener">Copilot</a>
-      </p>
-      <p class="small"><button class="link" id="openDash">Open the dashboard</button> to add projects, files and the rest of your profile.</p>
+  <section class="step" data-step="kit" hidden>
+    <h1>Pack your Pocket</h1>
+    <p class="lede">Optional, but this is where the magic is. Add these once; use them everywhere.</p>
+    <div class="kit" id="kitResume">
+      <h2>Your resume</h2>
+      <div class="drop" id="drop"><b>Drop your resume here</b><span>PDF, Word or text. Drag it onto job sites later, or let me attach it.</span><button class="btn sm" type="button" id="pick">Choose a file</button><input type="file" id="file" hidden></div>
+      <p class="saved" id="resumeNote" aria-live="polite"></p>
     </div>
-    <p class="small muted"><a href="privacy.html" target="_blank">What Pepper stores, and where</a>. Uninstalling Pepper deletes all of it.</p>
+    <div class="kit" id="kitDetails">
+      <h2>Details I can fill in for you</h2>
+      <div class="grid" id="details"></div>
+      <p class="why">Stored only in this browser. I fill them in only when you click Fill, and I never store passwords, card numbers or ID numbers.</p>
+    </div>
   </section>
+
+  <section class="step" data-step="key" hidden>
+    <h1>One last, optional thing</h1>
+    <p class="lede">I work fine on my own. With your own Anthropic or OpenAI key, your model writes the prompts and does full rewrites, and they read even better.</p>
+    <div class="keygrid">
+      <label class="field"><span>Provider</span>
+        <select id="provider"><option value="none">None, use Pepper's built-in writer</option><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
+      <label class="field"><span>API key</span><input type="password" id="key" autocomplete="off" spellcheck="false" placeholder="Paste your key"></label>
+    </div>
+    <div class="row"><button class="btn" type="button" id="testKey">Save and test</button><span class="small" id="keyNote" aria-live="polite"></span></div>
+    <p class="why">With a key, what you ask, your profile answers, active memories and your project's file text go to that provider, and nowhere else. The key stays in this browser.</p>
+  </section>
+
+  <section class="step" data-step="done" hidden>
+    <h1 id="doneTitle">You're all set!</h1>
+    <p class="lede" id="doneLede"></p>
+    <div class="go" id="goSites"></div>
+    <ul class="tips">
+      <li>Click the peppercorn, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> on any page.</li>
+      <li>Select text anywhere and click <b>Fix</b> or <b>Ask AI</b>.</li>
+      <li>Drop any file on the peppercorn to keep it in your Pocket.</li>
+      <li>Right-click a link or a page to save it to your Pocket.</li>
+    </ul>
+    <p class="small"><button class="link" type="button" id="openDash">Open your dashboard</button> · <a href="privacy.html" target="_blank">What Pepper stores, and where</a></p>
+  </section>
+
+  <footer class="obf">
+    <p class="err" id="err" role="alert"></p>
+    <button class="btn primary big" type="button" id="next" disabled>Let's go</button>
+  </footer>
 </main>
 <script src="lib/core.js"></script>
+<script src="lib/assist.js"></script>
 <script src="onboarding.js"></script>
 </body>
 </html>

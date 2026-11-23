@@ -1,63 +1,71 @@
 /* ==========================================================================
-   Pepper — The Personal AI Prompter · background worker (M8 + M10 writer)
-   - Only module with network access, limited to the two provider hosts.
-   - All list writes from every tab go through one serialized queue here,
-     re-reading storage before each write, so two tabs never overwrite each
-     other (C4). The learning engine (M7) recomputes inside the same queue.
+   Pepper — The Personal AI Prompter · background worker (v0.4)
+   - The only module with network access, limited to the two provider hosts.
+   - Every list write from every tab goes through one serialized queue, so two
+     tabs never overwrite each other; consent is re-checked before any record
+     from a web page is stored, and web pages may only make whitelisted writes.
+   - Also: Pocket files, prompt hand-offs to AI sites, "keep floating"
+     everywhere, focus reminders, the right-click menu and Alt+Shift+P.
    ========================================================================== */
-importScripts("lib/core.js");
+importScripts("lib/core.js", "lib/assist.js");
 const C = self.PepperCore;
+const A = self.PepperAssist;
 
-const LIST_KEYS = ["pepper_history", "pepper_saved_prompts", "pepper_memories", "pepper_files", "pepper_projects"];
-const OBJ_KEYS = ["pepper_settings", "pepper_profile", "pepper_consent", "pepper_learning", "pepper_ui"];
+const LIST_KEYS = ["pepper_history", "pepper_saved_prompts", "pepper_memories", "pepper_pocket", "pepper_projects", "pepper_reminders"];
+const OBJ_KEYS = ["pepper_settings", "pepper_profile", "pepper_consent", "pepper_learning", "pepper_ui", "pepper_details"];
 const VALUE_KEYS = ["pepper_active_project"];
-// Content scripts (running on AI sites) may only do these; everything else needs an extension page.
+// Content scripts (running on web pages) may only do these; everything else needs an extension page.
 const CONTENT_ALLOWED = new Set([
   "listAdd:pepper_history", "listPatch:pepper_history", "listAdd:pepper_saved_prompts",
-  "listAdd:pepper_memories", "set:pepper_active_project", "objPatch:pepper_ui"
+  "listAdd:pepper_memories", "set:pepper_active_project", "objPatch:pepper_ui", "listAdd:pepper_pocket"
 ]);
 const CONTENT_HISTORY_PATCH_FIELDS = new Set(["rating", "response", "partial", "responseChars", "truncated"]);
+const SCRIPT_FILES = ["lib/core.js", "lib/assist.js", "content.js"];
+const EVERYWHERE_ID = "pepper-everywhere";
+const AI_PATTERNS = C.SITES.flatMap(s => s.hosts).map(h => `*://${h}/*`);
 
 const DEFAULT_MEMORIES = [
   { id: "default-1", text: "I write in a plain, humanized tone with no dashes", active: false }
 ];
 
-/* ---------- install + migration ---------- */
+/* ---------- install, update, startup ---------- */
 chrome.runtime.onInstalled.addListener(async (details) => {
   await locked(async () => {
     const cur = await chrome.storage.local.get(null);
     const fresh = !cur.pepper_settings && !cur.pepper_history;
-    let data = cur;
+    let data;
     if (fresh) {
-      data = freshData(false);
+      data = freshData();
       await chrome.storage.local.set(data);
     } else {
       const m = C.migrate(cur, Date.now());
-      if (m.changed) await chrome.storage.local.set(m.data);
+      if (m.changed) {
+        await chrome.storage.local.set(m.data);
+        if (!("pepper_files" in m.data) && "pepper_files" in cur) await chrome.storage.local.remove("pepper_files");
+      }
       data = m.data;
     }
     await recomputeLearning();
-    const older = details.reason === "update" && versionLess(details.previousVersion || "0", "0.3.0");
-    if (details.reason === "install" || older) {
-      chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") + (older ? "#update" : "") });
+    const update = details.reason === "update";
+    if (details.reason === "install" || (update && !A.setupComplete(data.pepper_profile, data.pepper_settings))) {
+      chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") + (update ? "#update" : "") });
     }
   });
+  setupMenus();
+  await syncFloating();
+  await syncReminders();
 });
+chrome.runtime.onStartup.addListener(async () => { await syncFloating(); await syncReminders(); });
 
-function freshData(onboarded) {
+function freshData() {
   return {
-    pepper_settings: { enabled: true, minChars: 6, provider: "none", apiKey: "", model: "", onboarded: !!onboarded },
+    pepper_settings: { enabled: true, minChars: 6, provider: "none", apiKey: "", model: "", onboarded: false,
+      floating: null, features: A.defaultFeatures(), selectionButton: true },
     pepper_memories: DEFAULT_MEMORIES.map(m => ({ ...m })), pepper_history: [], pepper_profile: { answers: {}, completed: false },
-    pepper_files: [], pepper_projects: [], pepper_saved_prompts: [], pepper_active_project: null,
-    pepper_consent: C.defaultConsent(), pepper_learning: { types: {}, dismissedFacts: [] },
+    pepper_pocket: [], pepper_details: {}, pepper_reminders: [], pepper_projects: [], pepper_saved_prompts: [],
+    pepper_active_project: null, pepper_consent: C.defaultConsent(), pepper_learning: { types: {}, dismissedFacts: [] },
     pepper_ui: {}, pepper_schema: C.SCHEMA
   };
-}
-
-function versionLess(a, b) {
-  const pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
-  for (let i = 0; i < 3; i++) { const x = pa[i] || 0, y = pb[i] || 0; if (x !== y) return x < y; }
-  return false;
 }
 
 /* ---------- serialized writer ---------- */
@@ -97,6 +105,22 @@ function applyOp(op, cur) {
   }
 }
 
+/** A web page may add only a link or a short text snippet to the Pocket; files go through POCKET_ADD_FILE. */
+function cleanPageItem(item) {
+  const i = item || {};
+  if (i.kind === "link") {
+    const url = A.normalizeUrl(i.url);
+    if (!url) return null;
+    return { id: C.uuid(), kind: "link", url, title: String(i.title || url).slice(0, 200), addedAt: new Date().toISOString(), source: "page" };
+  }
+  if (i.kind === "snippet") {
+    const text = String(i.text || "").slice(0, 20000);
+    if (!text.trim()) return null;
+    return { id: C.uuid(), kind: "snippet", title: String(i.title || text.slice(0, 60)).slice(0, 120), text, addedAt: new Date().toISOString(), source: "page" };
+  }
+  return null;
+}
+
 const senderHost = (fromContent) => typeof fromContent === "string" ? fromContent : "";
 async function storeOp(op, fromContent) {
   const known = LIST_KEYS.includes(op.key) || OBJ_KEYS.includes(op.key) || VALUE_KEYS.includes(op.key);
@@ -104,10 +128,15 @@ async function storeOp(op, fromContent) {
   if (fromContent) {
     if (!CONTENT_ALLOWED.has(op.op + ":" + op.key)) return { ok: false, error: "Not allowed from a web page" };
     if (op.op === "listPatch" && Object.keys(op.patch || {}).some(k => !CONTENT_HISTORY_PATCH_FIELDS.has(k))) return { ok: false, error: "Field not allowed" };
+    if (op.key === "pepper_pocket") {
+      const item = cleanPageItem(op.item);
+      if (!item) return { ok: false, error: "Only links and text can be saved from a page" };
+      op = { ...op, item, end: false };
+    }
   }
   return locked(async () => {
     if (fromContent && op.key === "pepper_history" && op.op === "listAdd") {
-      // P2 enforced at the writer as well: a record from a web page is stored only if
+      // Enforced at the writer as well: a record from a web page is stored only if
       // the global switch and that site's learning flag are on right now, and the
       // record's site is the tab it came from.
       const s = await chrome.storage.local.get(["pepper_settings", "pepper_consent"]);
@@ -115,6 +144,11 @@ async function storeOp(op, fromContent) {
       if (!op.item || op.item.site !== tabHost || !C.consentAllows(s.pepper_settings, s.pepper_consent, tabHost)) {
         return { ok: false, error: "NO_CONSENT" };
       }
+    }
+    if (fromContent && op.key === "pepper_pocket") {
+      const s = await chrome.storage.local.get(["pepper_settings", "pepper_pocket"]);
+      if (!featureOn(s.pepper_settings, "pocket")) return { ok: false, error: "The Pocket is turned off" };
+      if ((s.pepper_pocket || []).length >= A.POCKET_LIMITS.items) return { ok: false, error: "Your Pocket is full" };
     }
     const cur = (await chrome.storage.local.get(op.key))[op.key];
     let next = applyOp(op, cur);
@@ -124,6 +158,7 @@ async function storeOp(op, fromContent) {
     return { ok: true, id: op.item ? op.item.id : undefined };
   });
 }
+const featureOn = (settings, id) => { const f = { ...A.defaultFeatures(), ...((settings && settings.features) || {}) }; return settings && settings.enabled !== false && !!f[id]; };
 
 async function learningReset(type) {
   return locked(async () => {
@@ -134,6 +169,221 @@ async function learningReset(type) {
   });
 }
 
+/* ---------- Pocket files: metadata in pepper_pocket, bytes under their own key ---------- */
+async function pocketAddFile(msg, fromContent) {
+  const meta = msg.item || {};
+  const data = typeof msg.data === "string" ? msg.data : "";
+  const size = Math.floor(data.length * 3 / 4) - (data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0);
+  if (!data || !meta.name) return { ok: false, error: "No file" };
+  return locked(async () => {
+    const s = await chrome.storage.local.get(["pepper_pocket", "pepper_settings"]);
+    if (fromContent && !featureOn(s.pepper_settings, "pocket")) return { ok: false, error: "The Pocket is turned off" };
+    const list = s.pepper_pocket || [];
+    const why = A.pocketRejects(list, size);
+    if (why) return { ok: false, error: why };
+    const id = C.uuid();
+    const name = String(meta.name).replace(/[\\/:*?"<>|\n\r]/g, "_").slice(0, 160);
+    const item = { id, kind: "file", name, mime: A.mimeFromName(name, meta.mime), size, hasBlob: true,
+      text: typeof meta.text === "string" ? meta.text.slice(0, 200000) : "", role: meta.role === "resume" ? "resume" : undefined,
+      addedAt: new Date().toISOString(), source: fromContent ? "page" : "dashboard" };
+    if (item.role === "resume") list.forEach(x => { if (x.role === "resume") delete x.role; });
+    await chrome.storage.local.set({ [A.blobKey(id)]: data, pepper_pocket: [item, ...list] });
+    return { ok: true, id, item };
+  });
+}
+async function pocketRemove(ids) {
+  return locked(async () => {
+    const del = new Set(ids.map(String));
+    const s = await chrome.storage.local.get(["pepper_pocket", "pepper_projects"]);
+    const list = (s.pepper_pocket || []).filter(i => !del.has(String(i.id)));
+    const projects = (s.pepper_projects || []).map(p => ({ ...p, fileIds: (p.fileIds || []).filter(f => !del.has(String(f))) }));
+    await chrome.storage.local.set({ pepper_pocket: list, pepper_projects: projects });
+    await chrome.storage.local.remove([...del].map(A.blobKey));
+    return { ok: true };
+  });
+}
+
+/* ---------- hand-off: carry a prompt to an AI site's box (never sends) ---------- */
+// Pending hand-offs are keyed by the tab Pepper opened, so no other tab can claim them.
+async function handoffs() { return (await chrome.storage.session.get("handoffs")).handoffs || {}; }
+async function handoff(msg, sender) {
+  const site = A.AI_SITES.find(s => s.id === msg.siteId) || A.AI_SITES[0];
+  const text = String(msg.text || "").slice(0, 60000);
+  if (!text.trim()) return { ok: false, error: "Nothing to send" };
+  const tab = await chrome.tabs.create({ url: site.url, active: true, index: sender && sender.tab ? sender.tab.index + 1 : undefined });
+  const all = await handoffs();
+  const now = Date.now();
+  for (const k of Object.keys(all)) if (now - all[k].at > A.HANDOFF_TTL) delete all[k];
+  all[tab.id] = { text, raw: String(msg.raw || "").slice(0, 2000), from: String(msg.from || "").slice(0, 200), siteId: site.id, at: now };
+  await chrome.storage.session.set({ handoffs: all });
+  return { ok: true, site: site.name };
+}
+async function handoffClaim(sender) {
+  const tabId = sender && sender.tab && sender.tab.id;
+  if (tabId == null) return { ok: false };
+  const all = await handoffs();
+  const h = all[tabId];
+  if (!h) return { ok: false };
+  delete all[tabId];
+  await chrome.storage.session.set({ handoffs: all });
+  if (Date.now() - h.at > A.HANDOFF_TTL) return { ok: false };
+  const host = (() => { try { return new URL(sender.url).host; } catch (e) { return ""; } })();
+  const site = C.siteForHost(host);
+  if (!site || site.id !== h.siteId) return { ok: false };
+  return { ok: true, text: h.text, raw: h.raw, from: h.from };
+}
+
+/* ---------- summon Pepper on any page (Alt+Shift+P, toolbar, right-click) ---------- */
+async function ensureInjected(tabId) {
+  try { const r = await chrome.tabs.sendMessage(tabId, { type: "PING" }); if (r && r.pong) return true; } catch (e) { /* not there yet */ }
+  try {
+    await chrome.scripting.insertCSS({ target: { tabId }, files: ["content.css"] });
+    await chrome.scripting.executeScript({ target: { tabId }, files: SCRIPT_FILES });
+    return true;
+  } catch (e) { return false; } // chrome:// pages, the web store, PDFs and the like
+}
+async function summon(tab, payload) {
+  const s = await chrome.storage.local.get(["pepper_profile", "pepper_settings"]);
+  if (!A.setupComplete(s.pepper_profile, s.pepper_settings)) { openPage("onboarding.html"); return { ok: false, error: "SETUP" }; }
+  if (!tab || tab.id == null) return { ok: false };
+  if (!(await ensureInjected(tab.id))) return { ok: false, error: "Pepper can't run on this page." };
+  try { await chrome.tabs.sendMessage(tab.id, payload); } catch (e) { return { ok: false }; }
+  return { ok: true };
+}
+function openPage(page, hash) {
+  const p = ["dashboard.html", "onboarding.html", "privacy.html"].includes(page) ? page : "dashboard.html";
+  return chrome.tabs.create({ url: chrome.runtime.getURL(p) + (hash ? "#" + String(hash).replace(/[^\w-]/g, "") : "") });
+}
+
+chrome.commands.onCommand.addListener((command, tab) => {
+  if (command === "toggle-panel") summon(tab, { type: "TOGGLE_PANEL" });
+});
+
+/* ---------- right-click menu ---------- */
+function setupMenus() {
+  chrome.contextMenus.removeAll(() => {
+    const add = (o) => chrome.contextMenus.create(o, () => void chrome.runtime.lastError);
+    add({ id: "pepper-fix", title: "Fix or improve with Pepper", contexts: ["selection", "editable"] });
+    add({ id: "pepper-ask", title: "Ask AI about this with Pepper", contexts: ["selection"] });
+    add({ id: "pepper-save-selection", title: "Save to Pepper's Pocket", contexts: ["selection"] });
+    add({ id: "pepper-save-link", title: "Save link to Pepper's Pocket", contexts: ["link"] });
+    add({ id: "pepper-save-page", title: "Save this page to Pepper's Pocket", contexts: ["page"] });
+  });
+}
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const id = info.menuItemId;
+  if (id === "pepper-fix") return summon(tab, { type: "OPEN_PANEL", tab: "fix", text: info.selectionText || "" });
+  if (id === "pepper-ask") return summon(tab, { type: "OPEN_PANEL", tab: "prompt", text: info.selectionText || "" });
+  let item = null;
+  if (id === "pepper-save-selection") item = { kind: "snippet", text: info.selectionText, title: (info.selectionText || "").slice(0, 60) };
+  if (id === "pepper-save-link") item = { kind: "link", url: info.linkUrl, title: info.selectionText || info.linkUrl };
+  if (id === "pepper-save-page") item = { kind: "link", url: info.pageUrl || (tab && tab.url), title: (tab && tab.title) || info.pageUrl };
+  if (!item) return;
+  const r = await storeOp({ op: "listAdd", key: "pepper_pocket", item }, "contextmenu");
+  if (tab && tab.id != null && await ensureInjected(tab.id)) {
+    chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: r.ok ? "Saved to your Pocket." : (r.error || "Couldn't save that.") }).catch(() => {});
+  }
+});
+
+/* ---------- keep floating: Pepper on every site, only with the user's permission ---------- */
+async function syncFloating() {
+  const s = (await chrome.storage.local.get("pepper_settings")).pepper_settings || {};
+  const want = s.enabled !== false && s.floating === "everywhere";
+  const has = await chrome.permissions.contains({ origins: ["<all_urls>"] }).catch(() => false);
+  const regs = await chrome.scripting.getRegisteredContentScripts({ ids: [EVERYWHERE_ID] }).catch(() => []);
+  if (want && has) {
+    if (!regs.length) {
+      await chrome.scripting.registerContentScripts([{ id: EVERYWHERE_ID, matches: ["<all_urls>"], excludeMatches: AI_PATTERNS,
+        js: SCRIPT_FILES, css: ["content.css"], runAt: "document_idle", allFrames: false, persistAcrossSessions: true }]).catch(() => {});
+      await injectOpenTabs();
+    }
+  } else if (regs.length) {
+    await chrome.scripting.unregisterContentScripts({ ids: [EVERYWHERE_ID] }).catch(() => {});
+  }
+  // The permission was removed (for example in chrome://extensions): fall back to AI sites only.
+  if (s.floating === "everywhere" && !has) {
+    await storeOp({ op: "objPatch", key: "pepper_settings", patch: { floating: "ai", floatingLost: true } }, false);
+  }
+  return { ok: true, active: want && has };
+}
+async function injectOpenTabs() {
+  const tabs = await chrome.tabs.query({}).catch(() => []);
+  for (const t of tabs.slice(0, 60)) {
+    if (!t.url || !/^https?:/.test(t.url) || C.siteForHost(new URL(t.url).host)) continue;
+    await ensureInjected(t.id);
+  }
+}
+chrome.permissions.onRemoved.addListener(() => { syncFloating(); syncReminders(); });
+chrome.permissions.onAdded.addListener(() => { bindNotifications(); syncFloating(); syncReminders(); });
+
+/* ---------- reminders ---------- */
+const hasNotifications = () => chrome.permissions.contains({ permissions: ["notifications"] }).catch(() => false);
+async function syncReminders() {
+  const s = await chrome.storage.local.get(["pepper_settings", "pepper_reminders"]);
+  const on = featureOn(s.pepper_settings, "reminders") && await hasNotifications();
+  const list = on ? (s.pepper_reminders || []).filter(r => r && r.enabled !== false) : [];
+  const existing = (await chrome.alarms.getAll()).filter(a => a.name.startsWith("rem:"));
+  const want = new Map(list.map(r => ["rem:" + r.id, r]));
+  for (const a of existing) if (!want.has(a.name)) await chrome.alarms.clear(a.name);
+  for (const [name, r] of want) {
+    const when = A.nextOccurrence(r.time, r.days, Date.now());
+    if (!when) continue;
+    const cur = existing.find(a => a.name === name);
+    if (cur && Math.abs(cur.scheduledTime - when) < 60000) continue;
+    await chrome.alarms.create(name, { when });
+  }
+  return { ok: true, count: want.size };
+}
+async function fireReminder(id, test) {
+  const s = await chrome.storage.local.get(["pepper_reminders", "pepper_profile", "pepper_details"]);
+  const r = test ? { id: "test", text: "This is how Pepper will nudge you." } : (s.pepper_reminders || []).find(x => String(x.id) === String(id));
+  if (!r || !chrome.notifications) return { ok: false };
+  const answers = (s.pepper_profile && s.pepper_profile.answers) || {};
+  const fav = A.favorites(answers)[0];
+  const who = A.firstName(answers, s.pepper_details);
+  await chrome.notifications.create(`pepper|${r.id}|${Date.now()}`, {
+    type: "basic", iconUrl: "icons/icon128.png", priority: 1,
+    title: `${A.greeting(new Date().getHours())}${who ? ", " + who : ""}`,
+    message: r.text || "Time to focus.",
+    buttons: [{ title: `Open ${fav.name}` }, { title: "Snooze 30 minutes" }]
+  });
+  return { ok: true };
+}
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  const [kind, id] = alarm.name.split(":");
+  if (kind === "rem") { await fireReminder(id); await syncRemindersAfterFire(alarm.name); }
+  if (kind === "snooze") await fireReminder(id);
+});
+async function syncRemindersAfterFire(name) { await chrome.alarms.clear(name); await syncReminders(); }
+let notificationsBound = false;
+function bindNotifications() {
+  if (notificationsBound || !chrome.notifications) return;
+  notificationsBound = true;
+  const openFav = async () => {
+    const answers = ((await chrome.storage.local.get("pepper_profile")).pepper_profile || {}).answers || {};
+    chrome.tabs.create({ url: A.favorites(answers)[0].url });
+  };
+  chrome.notifications.onClicked.addListener((nid) => { if (nid.startsWith("pepper|")) { openFav(); chrome.notifications.clear(nid); } });
+  chrome.notifications.onButtonClicked.addListener((nid, i) => {
+    if (!nid.startsWith("pepper|")) return;
+    const id = nid.split("|")[1];
+    if (i === 0) openFav(); else if (id !== "test") chrome.alarms.create("snooze:" + id, { delayInMinutes: 30 });
+    chrome.notifications.clear(nid);
+  });
+}
+bindNotifications();
+
+/* ---------- settings changes made anywhere take effect here ---------- */
+chrome.storage.onChanged.addListener((ch, area) => {
+  if (area !== "local") return;
+  if (ch.pepper_settings) {
+    const a = ch.pepper_settings.oldValue || {}, b = ch.pepper_settings.newValue || {};
+    if (a.floating !== b.floating || a.enabled !== b.enabled) syncFloating();
+    if (JSON.stringify(a.features || {}) !== JSON.stringify(b.features || {}) || a.enabled !== b.enabled) syncReminders();
+  }
+  if (ch.pepper_reminders) syncReminders();
+});
+
 /* ---------- messages ---------- */
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !msg || typeof msg !== "object") return; // foreign sender: no response
@@ -141,44 +391,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   const fromExtension = !!(sender.url && sender.url.startsWith(extOrigin));
   let fromContent = false;
   if (!fromExtension) { try { fromContent = new URL(sender.url || sender.origin || "").host || "unknown"; } catch (e) { fromContent = "unknown"; } }
+  const reply = (p) => { p.then(sendResponse, e => sendResponse({ ok: false, error: String(e && e.message || e) })); return true; };
 
-  if (msg.type === "OPEN_PAGE") {
-    const page = ["dashboard.html", "onboarding.html", "privacy.html"].includes(msg.page) ? msg.page : "dashboard.html";
-    chrome.tabs.create({ url: chrome.runtime.getURL(page) + (msg.hash ? "#" + String(msg.hash).replace(/[^\w-]/g, "") : "") });
-    sendResponse({ ok: true });
-    return;
+  switch (msg.type) {
+    case "OPEN_PAGE": openPage(msg.page, msg.hash); sendResponse({ ok: true }); return;
+    case "LLM": return reply(callLLM(msg.system, msg.user, msg.maxTokens || 3000));
+    case "STORE": return reply(storeOp(msg.op || {}, fromContent));
+    case "POCKET_ADD_FILE": return reply(pocketAddFile(msg, fromContent));
+    case "HANDOFF": return reply(handoff(msg, sender));
+    case "HANDOFF_CLAIM": return fromContent ? reply(handoffClaim(sender)) : undefined;
   }
-  if (msg.type === "LLM") {
-    callLLM(msg.system, msg.user, msg.maxTokens || 3000).then(sendResponse);
-    return true;
-  }
-  if (msg.type === "STORE") {
-    storeOp(msg.op || {}, fromContent).then(sendResponse, e => sendResponse({ ok: false, error: String(e) }));
-    return true;
-  }
-  if (msg.type === "LEARNING_RESET" && !fromContent) {
-    learningReset(String(msg.projectType || "General")).then(sendResponse);
-    return true;
-  }
-  if (msg.type === "WIPE" && !fromContent) {
-    locked(async () => {
+  if (fromContent) return; // everything below is for Pepper's own pages
+  switch (msg.type) {
+    case "POCKET_REMOVE": return reply(pocketRemove(msg.ids || [msg.id]));
+    case "LEARNING_RESET": return reply(learningReset(String(msg.projectType || "General")));
+    case "RECOMPUTE": return reply(locked(recomputeLearning).then(() => ({ ok: true })));
+    case "SYNC": return reply(Promise.all([syncFloating(), syncReminders()]).then(([f, r]) => ({ ok: true, floating: f.active, reminders: r.count })));
+    case "SUMMON": return reply(chrome.tabs.get(msg.tabId).then(t => summon(t, { type: "OPEN_PANEL", tab: msg.tab })));
+    case "REMINDER_TEST": return reply(fireReminder("test", true));
+    case "WIPE": return reply(locked(async () => {
       const keep = msg.keepKey ? (await chrome.storage.local.get("pepper_settings")).pepper_settings : null;
       await chrome.storage.local.clear();
-      const data = freshData(true);
+      const data = freshData();
       if (keep && keep.apiKey) Object.assign(data.pepper_settings, { provider: keep.provider, apiKey: keep.apiKey, model: keep.model });
       await chrome.storage.local.set(data);
-    }).then(() => sendResponse({ ok: true }), e => sendResponse({ ok: false, error: String(e) }));
-    return true;
-  }
-  if (msg.type === "RECOMPUTE" && !fromContent) {
-    locked(recomputeLearning).then(() => sendResponse({ ok: true }));
-    return true;
-  }
-});
-
-chrome.commands.onCommand.addListener((command, tab) => {
-  if (command === "toggle-panel" && tab && tab.id != null) {
-    chrome.tabs.sendMessage(tab.id, { type: "TOGGLE_PANEL" }).catch(() => {});
+      await chrome.alarms.clearAll();
+      return { ok: true };
+    }).then(async (r) => { await syncFloating(); return r; }));
   }
 });
 

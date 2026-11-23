@@ -1,88 +1,55 @@
 # Pepper — The Personal AI Prompter
 
-Version 0.3.0. A Chrome and Edge extension (Manifest V3).
+Version 0.4.0. An extension for Chrome, Brave and Edge (Manifest V3).
 
-You type what you want in a few words. Pepper rewrites it into a prompt with six labelled parts (Role, Context, Task, Constraints, Output format, Success criteria), using only what you have told it about yourself. Then it places the prompt in the chat box of ChatGPT, Claude, Gemini, Perplexity or Copilot. You read it and press send. Pepper never sends anything for you.
+Pepper is a small companion that floats on your screen. It turns a few words into a clear, six-part prompt built from what you've told it about yourself, fixes your writing anywhere, keeps your files and details one click away, and fills job applications. Everything stays in your browser. Pepper never sends anything for you.
 
-## Install (unpacked)
+## Install
 
-1. Open `chrome://extensions` (or `edge://extensions`) and turn on **Developer mode**.
-2. Click **Load unpacked** and choose this folder (the one containing `manifest.json`).
-3. The welcome page opens. Choose where Pepper may learn, optionally add a model key, and answer three questions.
+1. Get the folder that has `manifest.json` directly inside it: either unzip `pepper-v0.4.0.zip`, or use this `pepper-extension` folder from the repository.
+2. Open `chrome://extensions` (Brave: `brave://extensions`, Edge: `edge://extensions`) and turn on **Developer mode**.
+3. Click **Load unpacked** and choose that folder.
 
-If you are updating from v0.2, Pepper keeps all your data, converts it to the new format, and opens the welcome page with a note about your old history. You can keep or delete it.
+If you see **"Manifest file is missing or unreadable"**, you picked the folder one level too high. Open it and choose the folder that contains `manifest.json`.
+
+The welcome page opens. Answer the questions (about two minutes); Pepper unlocks when you finish.
 
 ## Using it
 
-On any of the five sites, click the green peppercorn in the bottom-right corner, or press **Alt+Shift+P**. Drag the peppercorn up or down if it covers something; Pepper remembers where you put it on each site.
+**The peppercorn.** Click it, or press **Alt+Shift+P** on any page. Drag it anywhere; it remembers the spot per site. Drop a file on it to keep the file in your Pocket.
 
-1. Pick a project at the top of the panel, or leave it on No project.
-2. Type your request, or start from a suggestion: your best-rated past requests, saved prompts, recurring tasks or project ideas.
-3. Choose an approach (Balanced, Clarify, Expert role, Constraints, Deeper, Leaner), or let Pepper pick the one that has worked best for you.
-4. Click **Write my prompt** (Ctrl+Enter, or ⌘+Enter on a Mac).
-5. Check the result. Anything Pepper guessed about you is listed separately under **Pepper assumed these**. Assumptions are never in the prompt unless you click **Add to prompt** or **Add and remember**.
-6. Use **Shorter**, **Longer**, **More formal**, **More casual** or **Edit** if needed, then **Insert into [site]**. If Pepper can't reach the box, it copies the prompt and tells you.
-7. Press the site's own send button.
+**Write.** Type what you want; pick an approach or let Pepper start on the one that fits how you think. Click **Write my prompt**. Check the six parts and anything Pepper assumed (assumptions are never in the prompt unless you add them). On an AI site, **Insert** puts it in the box. Anywhere else, **Send to** opens your AI with the prompt in the box. Tick **Use this page** to bring the page along as source material.
 
-The dashboard (the settings button at the top of the panel, or the toolbar popup) holds your profile, memories, projects and files, saved prompts, history, what Pepper learned, privacy controls and model settings.
+**Fix.** Select text on any page and click **Fix** on the little pill, or right-click it. Fix (spelling, spacing, capitals) works offline. Improve, Shorter, More formal, Similar ideas and Explain run on your model if you added a key; otherwise Pepper writes a ready prompt for your AI. **Replace** puts the result back.
+
+**Pocket.** Your files, links, templates and details. Drag a file onto an upload field, click **Attach**, or **Open** it. Click a link to open it. **Insert** a template into the field you're typing in; `{{fullName}}`, `{{email}}`, `{{name}}`, `{{role}}`, `{{today}}` and your other details fill in. Click a detail to copy it, or to fill the empty field you're in.
+
+**Fill.** On an application form, Pepper lists the fields it recognizes. **Fill** puts your details into the empty ones; choose a file for each upload field and click **Attach**. Pepper never submits, never overwrites what you typed, and never fills password, payment or ID fields.
+
+**Right-click** selected text, a link or a page for Fix, Ask AI and Save to Pocket.
+
+## Where Pepper floats
+
+You choose in onboarding, and can change it in the popup or Settings:
+
+- **Only on AI sites** (default): ChatGPT, Claude, Gemini, Perplexity and Copilot. Call Pepper anywhere else with Alt+Shift+P, the toolbar button or the right-click menu; that uses the browser's "active tab" access for that one tab only.
+- **Keep floating everywhere:** your browser asks once to allow Pepper on all sites. Hide it on any site from its panel or the popup.
 
 ## With or without a model key
 
-Without a key, Pepper writes the prompt with a built-in template on your device. It works offline and every profile answer still changes it.
+Without a key, Pepper writes prompts with a built-in template and fixes text offline. With your own Anthropic or OpenAI key, your model writes prompts and runs the Fix tools. Defaults: `claude-sonnet-5-5` and `gpt-5.6-sol`; type another model name in **Settings → Model**, and use **Test connection**.
 
-With your own Anthropic or OpenAI key, your model writes the prompt. The default models are `claude-sonnet-5-5` and `gpt-5.6-sol`; you can type another model name in **Model and settings**. Use **Test connection** to check the key.
+## Learning
 
-## Learning, and what it saves
-
-Learning is set per site and is **off on all five until you turn it on** (in onboarding, the popup, or **Privacy and data**). With learning on for a site, Pepper saves each prompt you send there, up to 4,000 characters of the reply, and the stars you give it. With learning off, or Pepper switched off, nothing is saved.
-
-From those records Pepper:
-
-- picks the approach with your highest average rating for each kind of work, once you have rated 5 replies to prompts it wrote, and tells you why ("Pepper chose Expert role: your average 5.0 stars across 2 ratings.");
-- aims for the length of your 4 and 5 star prompts, once there are 3, without leaving the length range you chose;
-- suggests your best-rated past requests in the panel;
-- with a model key, finds facts you stated about yourself in past prompts and offers them as memories, which you confirm or dismiss.
-
-Only prompts sent within 10 minutes of an Insert, and still at least half the same text, count as written with Pepper. **What Pepper learned** shows every number it used, with a Reset for each kind of work.
-
-Pepper does not paste your past prompts or replies into new prompts.
-
-## How each question is used
-
-| | Question | Where it changes the prompt |
-|---|---|---|
-| Q1 | Where you use AI | Keeps the prompt self-contained for the tools you named |
-| Q2 | What you use AI for | The expert in Role when no project is active; a line in Context |
-| Q3 | Role or occupation | Context ("I'm a…") |
-| Q4 | Field or industry | Context; the expert in Role if nothing else sets it |
-| Q5 | Response style | Constraints; step-by-step adds numbered steps to Output format |
-| Q6 | Tone | Constraints (More formal and More casual override it once) |
-| Q7 | Prompting experience | Beginner: a note under each section saying what it's for. Intermediate: one opening line. Advanced: nothing extra |
-| Q8 | Formatting | Output format |
-| Q9 | Response length | Constraints |
-| Q10 | Goals | Context; a panel suggestion |
-| Q11 | Recurring tasks | Panel suggestions; Context asks for a reusable structure |
-| Q12 | Languages | The first one is the language of the prompt and the reply |
-| Q13 | Things to avoid | Constraints |
-| Q14 | Audience | Role, Constraints and Success criteria |
-| Q15 | How much to expand | Target length: Light 150–250 words, Moderate 400–600, Heavy 800–950; also how much detail the template adds |
-
-## Files
-
-Text files (txt, md, csv, json, code and similar) are read when you add them. For PDF or Word files, paste the text once in **Projects and files**. Pepper uses up to 2,500 characters per file and 6,000 per prompt, and marks anything trimmed. File text is always sent and inserted as labelled data blocks, never mixed into Pepper's instructions, so a file that says "ignore previous instructions" can't change the Role. Untick **Attach file text** in the panel to insert the prompt without it.
+Learning is per AI site and off until you turn it on. With it on, Pepper saves each prompt you send there, up to 4,000 characters of the reply, and the stars you give it. After 5 ratings of prompts it wrote for one kind of work, it starts on the approach with your best average and says why. **History → What Pepper learned** shows every number, with a Reset.
 
 ## Privacy, in short
 
-Everything is stored in this browser only. There is no Pepper server, account or analytics. With a model key, the text needed to write a prompt (your request, profile answers, active memories, the project and its file text) goes to that provider and nowhere else. The key is never exported or shown to the AI sites. See `PRIVACY.md` (also `privacy.html` in the extension), a draft that still needs legal review.
+Everything is stored in this browser. No Pepper server, account or analytics. With a model key, the text needed for what you asked goes to that provider and nowhere else; your details and file contents never do. See `PRIVACY.md` (also `privacy.html` in the extension).
 
 ## Honest limits
 
-- The page selectors in `lib/core.js` (`SITES`) are best guesses for the live sites as of October 2026. They were tested against local mock pages only. AI sites change their markup often, so insert, send detection and reply capture must be checked on the live sites with `docs/LIVE-TEST-PROTOCOL.md`.
-- Reply capture reads the newest reply after you press send. If a site's reply can't be read, the record is kept with an empty reply and can still be rated.
-- On Microsoft Edge 150 and later, Pepper can't run on Copilot: Edge blocks every third-party extension on `copilot.microsoft.com`, and no policy overrides it. Copilot works in Chrome.
-- PDF and Word files are not parsed; paste their text.
-- Learning needs ratings. Until you have rated 5 replies to Pepper-written prompts for a kind of work, Pepper uses Balanced.
-
-## Files in this folder
-
-`manifest.json`, `background.js` (storage writer, model calls), `content.js` (panel, insert, capture), `lib/core.js` (all prompt, parsing, consent, learning and migration logic), `dashboard.*`, `onboarding.*`, `popup.*`, `privacy.html`, `pages.css`, `content.css`, `icons/`, `PRIVACY.md`.
+- Site selectors change when AI sites redesign. Gemini and Perplexity were checked live on 2026-11-22. ChatGPT and Claude show bot checks to automated browsers, so they were checked on faithful mock pages; please check them in your own browser.
+- Microsoft Edge blocks all extensions on Copilot by design. Copilot works in Chrome and Brave (and asks logged-out visitors to sign in).
+- PDF text isn't read; paste a PDF's text into its Pocket entry if you want prompts to use it. Word files are read.
+- Dragging a file from the Pocket onto a page relies on the browser carrying it; if a site doesn't accept the drop, use **Attach**.

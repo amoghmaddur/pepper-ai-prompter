@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Pepper — The Personal AI Prompter · core logic (v0.3)
+   Pepper — The Personal AI Prompter · core logic (v0.4)
    Pure functions shared by the content script, background worker and
    dashboard. No DOM, no chrome.* calls, so every function here can be
    unit-tested in Node (see pepper-tests/unit/core.test.js).
@@ -7,7 +7,7 @@
 (function (root) {
   "use strict";
 
-  const SCHEMA = 1;
+  const SCHEMA = 2;
   const PRODUCT = "Pepper — The Personal AI Prompter";
 
   /* ---------- M1 site table: the five tier-1 sites, nothing else ---------- */
@@ -34,12 +34,14 @@
       busy: null,
       insert: "editable" },
     { id: "perplexity", name: "Perplexity", hosts: ["www.perplexity.ai", "perplexity.ai"],
-      input: '#ask-input, textarea[placeholder]',
+      // 2026-11: the box is a Lexical editor labelled "Ask anything…" (checked live); older pages used a textarea.
+      input: 'div[contenteditable="true"][data-lexical-editor="true"], #ask-input, textarea[placeholder]',
       send: 'button[data-testid="submit-button"], button[aria-label="Submit"]',
       response: '[id^="markdown-content"], .prose',
       busy: null,
       insert: "auto" },
-    { id: "copilot", name: "Copilot", hosts: ["copilot.microsoft.com"],
+    // 2026-11: copilot.microsoft.com now redirects to copilot.com (checked live).
+    { id: "copilot", name: "Copilot", hosts: ["copilot.microsoft.com", "copilot.com", "www.copilot.com"],
       input: '#userInput, textarea[data-testid="composer-input"]',
       send: 'button[data-testid="submit-button"], button[aria-label="Submit message"]',
       response: '[data-content="ai-message"]',
@@ -616,10 +618,38 @@
     INTERNAL_FIELDS.forEach(k => delete o[k]);
     return o;
   }
-  /** v0.2 → schema 1. Keeps every record; IDs become strings so references still match. */
+  /** v0.2 → schema 1 → schema 2. Keeps every record; IDs become strings so references still match. */
   function migrate(data, now) {
-    const d = { ...(data || {}) };
+    let d = { ...(data || {}) };
     if (d.pepper_schema >= SCHEMA) return { data: d, changed: false };
+    if (!(d.pepper_schema >= 1)) d = migrateTo1(d, now);
+    if (d.pepper_schema < 2) d = migrateTo2(d);
+    return { data: d, changed: true };
+  }
+  /** Schema 2 (v0.4): project files move into the Pocket (same IDs, so projects still point at them),
+      and setup must be finished again because onboarding asks new questions. */
+  function migrateTo2(data) {
+    const d = { ...data };
+    const pocket = Array.isArray(d.pepper_pocket) ? d.pepper_pocket : [];
+    const have = new Set(pocket.map(i => String(i.id)));
+    const moved = (d.pepper_files || []).filter(f => !have.has(String(f.id))).map(f => ({
+      id: String(f.id), kind: "file", name: f.name || "file.txt", mime: f.type || "text/plain", size: f.size || (f.text || "").length,
+      text: f.text || "", hasBlob: false, needsText: !!f.needsPaste, addedAt: f.addedAt || null
+    }));
+    d.pepper_pocket = [...pocket, ...moved];
+    delete d.pepper_files;
+    if (!d.pepper_details || typeof d.pepper_details !== "object") d.pepper_details = {};
+    if (!Array.isArray(d.pepper_reminders)) d.pepper_reminders = [];
+    const st = { ...(d.pepper_settings || {}) };
+    if (!st.features) st.features = { pocket: true, writing: true, autofill: false, reminders: false };
+    if (st.selectionButton == null) st.selectionButton = true;
+    d.pepper_settings = st;
+    d.pepper_profile = { answers: {}, ...(d.pepper_profile || {}), completed: false };
+    d.pepper_schema = 2;
+    return d;
+  }
+  function migrateTo1(data, now) {
+    const d = { ...data };
     const S = (v) => v == null ? null : String(v);
     const projects = (d.pepper_projects || []).map(p => ({ ...p, id: S(p.id), fileIds: (p.fileIds || []).map(S) }));
     const typeOf = (pid) => { const p = projects.find(x => x.id === S(pid)); return p ? p.type : "General"; };
@@ -643,8 +673,8 @@
     d.pepper_settings = { enabled: true, minChars: 6, provider: "none", apiKey: "", model: "", ...(d.pepper_settings || {}) };
     if (d.pepper_settings.onboarded == null) d.pepper_settings.onboarded = false;
     d.pepper_history = prune(d.pepper_history, now);
-    d.pepper_schema = SCHEMA;
-    return { data: d, changed: true };
+    d.pepper_schema = 1;
+    return d;
   }
 
   const DEFAULT_MODELS = { anthropic: "claude-sonnet-5-5", openai: "gpt-5.6-sol" };

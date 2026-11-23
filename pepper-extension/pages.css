@@ -35,6 +35,8 @@ button{cursor:pointer}
 /* controls */
 .btn{height:38px;padding:0 16px;border-radius:10px;border:1px solid var(--line);background:var(--surface);font-weight:600;font-size:14px;display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
 .btn:hover{border-color:var(--pepper)}
+a.btn{text-decoration:none;color:var(--ink)}
+a.btn.primary{color:var(--pepper-ink)}
 .btn.primary{background:var(--pepper);border-color:var(--pepper);color:var(--pepper-ink)}
 .btn.primary:hover{background:var(--pepper-hi)}
 .btn.danger{color:var(--danger)}

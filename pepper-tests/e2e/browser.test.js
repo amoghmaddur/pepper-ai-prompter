@@ -45,6 +45,14 @@ test("real build", { timeout: 120000 }, async (t) => {
       await cop.close();
     });
 
+    await t.test("v0.4 before setup: learning on still records nothing; setup is required first", async () => {
+      await storage.consent("chatgpt", true); await wait(300);
+      await gpt.click("#prompt-textarea"); await gpt.keyboard.type("not set up yet"); await gpt.keyboard.press("Enter");
+      await wait(2500);
+      assert.deepEqual(await storage.get("pepper_history"), []);
+      await storage.completeSetup(); await wait(400);
+    });
+
     await t.test("M6 learning on for ChatGPT: one send records the NEW reply, not the old one", async () => {
       await storage.consent("chatgpt", true);
       await gpt.click("#prompt-textarea"); await gpt.keyboard.type("what is a good name for a cat"); await gpt.keyboard.press("Enter");
@@ -101,7 +109,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
   } });
   const P = (p, sel) => p.locator("#pepper-host").locator(sel);
   try {
-    await storage.set({ pepper_profile: { answers: { q3: "graduate student", q4: "software", q6: "Professional", q7: "Beginner", q13: "no em dashes", q14: "recruiters", q15: "Light touch" } } });
+    await storage.completeSetup({ q3: "graduate student", q4: "software", q6: "Professional", q7: "Beginner", q13: "no em dashes", q14: "recruiters", q15: "Light touch" });
     await storage.consent("chatgpt", true); await storage.consent("claude", true); await storage.consent("copilot", true);
     const gpt = await ctx.newPage(); await gpt.goto("https://chatgpt.com/"); await gpt.waitForTimeout(1200);
 
@@ -207,7 +215,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
 
     await t.test("model path: request goes to the provider with files as data; assumptions shown, never inserted", async () => {
       await storage.set({
-        pepper_files: [{ id: "f1", name: "resume.txt", text: "Built a payments ledger at Acme in Rust." }],
+        pepper_pocket: [{ id: "f1", kind: "file", name: "resume.txt", text: "Built a payments ledger at Acme in Rust.", size: 39, hasBlob: false }],
         pepper_projects: [{ id: "p1", name: "Jobs 2026", type: "Job applications", description: "New-grad SWE roles", fileIds: ["f1"] }],
         pepper_active_project: "p1"
       });
@@ -284,7 +292,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
     await t.test("extension pages render (screenshots)", async () => {
       const base = `chrome-extension://${extId}/`;
       const pg = await ctx.newPage(); await pg.setViewportSize({ width: 1280, height: 900 });
-      for (const s of ["home", "about", "projects", "history", "learned", "privacy", "settings"]) {
+      for (const s of ["home", "you", "pocket", "projects", "history", "reminders", "settings"]) {
         await pg.goto(base + "dashboard.html#" + s); await pg.waitForTimeout(500);
         const errs = []; pg.on("pageerror", e => errs.push(e.message));
         await pg.screenshot({ path: path.join(SHOTS, `dashboard-${s}.png`), fullPage: true });
@@ -292,7 +300,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       }
       await pg.goto(base + "onboarding.html#update"); await pg.waitForTimeout(500);
       await pg.screenshot({ path: path.join(SHOTS, "onboarding.png"), fullPage: true });
-      assert.equal(await pg.isVisible("#update"), true, "update notice shows when history exists");
+      assert.equal(await pg.isVisible("#updateNote"), true, "the update note shows on the first step");
       await pg.goto(base + "privacy.html"); await pg.waitForTimeout(300);
       await pg.screenshot({ path: path.join(SHOTS, "privacy.png"), fullPage: true });
       await pg.setViewportSize({ width: 340, height: 420 });

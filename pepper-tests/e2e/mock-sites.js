@@ -63,4 +63,45 @@ const PAGES = {
   "poe.com": common({ title: "Poe (not a Pepper site)", bg: "#fff", fg: "#111", bubble: "#eee",
     input: '<textarea id="in"></textarea>', inputSel: "#in", sendAttr: 'id="s"', sendSel: "#s", respAttr: "", respSet: "" })
 };
+/* An ordinary page (for "keep floating", the writing helper and the Pocket):
+   readable text, a textarea, a rich editor and a drop zone that records files. */
+PAGES["example.org"] = `<!doctype html><html><head><meta charset="utf-8"><title>Remote work notes</title>
+<style>body{margin:0;font:16px/1.6 Georgia,serif;background:#fff;color:#222}main{max-width:720px;margin:0 auto;padding:32px 24px 200px}
+textarea,#ce{width:100%;min-height:80px;border:1px solid #bbb;border-radius:8px;padding:10px;font:15px/1.5 system-ui}#dz{margin-top:16px;border:2px dashed #999;border-radius:12px;padding:30px;text-align:center}</style></head>
+<body><main><h1>Remote work notes</h1>
+<p id="para">Remote work boosts focus for many teams because fewer interruptions leave longer blocks for deep work.</p>
+<label for="notes">Your notes</label><textarea id="notes">i think teh plan is  good ,but i dont know</textarea>
+<div id="ce" contenteditable="true">draft here</div>
+<div id="dz">Drop files here</div>
+</main><script>
+window.__dropped = [];
+dz.addEventListener("dragover", e => e.preventDefault());
+dz.addEventListener("drop", e => { e.preventDefault(); window.__dropped.push(...[...e.dataTransfer.files].map(f => f.name + ":" + f.size)); });
+</script></body></html>`;
+
+/* A job application in the style of Greenhouse: labelled fields, a country
+   select, a resume upload, a password field Pepper must never fill, and a
+   submit handler that counts submissions (Pepper must never submit). */
+PAGES["boards.greenhouse.io"] = `<!doctype html><html><head><meta charset="utf-8"><title>Software Engineer, New Grad - Apply</title>
+<style>body{margin:0;font:15px/1.5 system-ui;background:#f7f7f7;color:#222}form{max-width:640px;margin:24px auto;background:#fff;padding:24px;border-radius:12px;display:grid;gap:10px}
+input,select,textarea{font:inherit;padding:8px;border:1px solid #bbb;border-radius:6px}</style></head>
+<body><form id="app">
+<h1>Apply for this job</h1>
+<label for="first_name">First Name *</label><input id="first_name" name="job_application[first_name]">
+<label for="last_name">Last Name *</label><input id="last_name" name="job_application[last_name]">
+<label for="email">Email *</label><input id="email" type="email" name="job_application[email]">
+<label for="phone">Phone</label><input id="phone" name="job_application[phone]" value="">
+<label>LinkedIn Profile <input id="li" name="urls[LinkedIn]"></label>
+<label for="country">Country</label><select id="country"><option value="">Select...</option><option value="CA">Canada</option><option value="US">United States</option></select>
+<label for="city">City</label><input id="city" name="job_application[location]" value="Already typed">
+<label for="resume">Resume/CV</label><input type="file" id="resume" name="job_application[resume]">
+<label for="pw">Create a password</label><input type="password" id="pw">
+<label for="why">Why do you want to work here?</label><textarea id="why"></textarea>
+<button type="submit">Submit application</button>
+</form><script>
+window.__submitted = 0; window.__changes = {};
+app.addEventListener("submit", e => { e.preventDefault(); window.__submitted++; });
+document.querySelectorAll("input,select").forEach(el => el.addEventListener("change", () => { window.__changes[el.id] = el.type === "file" ? (el.files[0] || {}).name : el.value; }));
+</script></body></html>`;
+
 module.exports = { PAGES };

@@ -199,9 +199,11 @@ test("M5 consentAllows: needs the global switch AND the site's flag; unknown hos
   assert.equal(C.consentAllows(on, c, "poe.com"), false);
   assert.equal(C.consentAllows(on, C.defaultConsent(), "claude.ai"), false, "off by default");
 });
-test("C2 site table covers exactly the five sites and seven hosts", () => {
+test("C2 site table covers exactly the five sites and nine hosts (Copilot moved to copilot.com in 2026)", () => {
   assert.deepEqual(C.SITES.map(s => s.id), ["chatgpt", "claude", "gemini", "perplexity", "copilot"]);
-  assert.equal(C.SITES.flatMap(s => s.hosts).length, 7);
+  assert.deepEqual(C.SITES.flatMap(s => s.hosts), ["chatgpt.com", "chat.openai.com", "claude.ai", "gemini.google.com",
+    "www.perplexity.ai", "perplexity.ai", "copilot.microsoft.com", "copilot.com", "www.copilot.com"]);
+  assert.equal(C.siteForHost("copilot.com").id, "copilot");
 });
 
 /* ---------------- C14 / M7: learning (seeded ratings) ---------------- */
@@ -285,7 +287,11 @@ test("C4 migration keeps every v0.2 record and reference, maps enhanced → assi
   assert.equal(a.projectType, "Job applications");
   assert.equal(typeof a.id, "string");
   assert.equal(data.pepper_active_project, data.pepper_projects[0].id);
-  assert.equal(data.pepper_projects[0].fileIds[0], data.pepper_files[0].id);
+  // v0.4 (schema 2): project files move into the Pocket with the same IDs, so references still match
+  assert.ok(!("pepper_files" in data));
+  assert.equal(data.pepper_projects[0].fileIds[0], data.pepper_pocket[0].id);
+  assert.deepEqual([data.pepper_pocket[0].kind, data.pepper_pocket[0].name, data.pepper_pocket[0].text], ["file", "resume.txt", "x"]);
+  assert.equal(data.pepper_profile.completed, false, "the new setup questions must be answered after the update");
   assert.equal(data.pepper_saved_prompts[0].projectId, data.pepper_projects[0].id);
   assert.deepEqual(data.pepper_consent, C.defaultConsent(), "learning off everywhere after update");
   assert.equal(data.pepper_settings.apiKey, "sk-test", "key preserved");
@@ -321,14 +327,18 @@ test("Facts: the prompt sent for fact-finding uses the user's own rough prompts,
 });
 
 /* ---------------- N8 / C2: manifest ---------------- */
-test("N8 manifest: only storage + unlimitedStorage, the two provider hosts, exactly the 7 site patterns, nothing web-accessible, strict CSP, exact name", () => {
+test("N8 manifest: exactly the v0.4 permissions, all-sites and notifications only as optional, the two provider hosts, the 7 site patterns, nothing web-accessible, strict CSP, exact name", () => {
   const m = require("../../pepper-extension/manifest.json");
   assert.equal(m.manifest_version, 3);
   assert.equal(m.name, "Pepper — The Personal AI Prompter");
-  assert.deepEqual([...m.permissions].sort(), ["storage", "unlimitedStorage"]);
+  // Each one is justified in PRIVACY.md "Permissions Pepper asks for"; none shows an install warning beyond the provider hosts.
+  assert.deepEqual([...m.permissions].sort(), ["activeTab", "alarms", "contextMenus", "scripting", "storage", "unlimitedStorage"]);
+  assert.deepEqual(m.optional_permissions, ["notifications"]);
+  assert.deepEqual(m.optional_host_permissions, ["<all_urls>"], "every-site access is requested only when the user picks Keep floating");
   assert.deepEqual([...m.host_permissions].sort(), ["https://api.anthropic.com/*", "https://api.openai.com/*"]);
+  assert.deepEqual(m.content_scripts[0].js, ["lib/core.js", "lib/assist.js", "content.js"]);
   assert.deepEqual(m.content_scripts.flatMap(c => c.matches).sort(), ["*://chat.openai.com/*", "*://chatgpt.com/*", "*://claude.ai/*",
-    "*://copilot.microsoft.com/*", "*://gemini.google.com/*", "*://perplexity.ai/*", "*://www.perplexity.ai/*"]);
+    "*://copilot.com/*", "*://copilot.microsoft.com/*", "*://gemini.google.com/*", "*://perplexity.ai/*", "*://www.copilot.com/*", "*://www.perplexity.ai/*"]);
   assert.ok(!("web_accessible_resources" in m));
   assert.equal(m.content_security_policy.extension_pages, "script-src 'self'; object-src 'self'; frame-ancestors 'none'");
   // every match pattern host has a SITES entry, and vice versa

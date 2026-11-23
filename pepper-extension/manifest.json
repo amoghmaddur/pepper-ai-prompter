@@ -2,13 +2,16 @@
   "manifest_version": 3,
   "name": "Pepper — The Personal AI Prompter",
   "short_name": "Pepper",
-  "version": "0.3.0",
-  "description": "Turns your rough prompt into a clear six-part prompt on ChatGPT, Claude, Gemini, Perplexity and Copilot, using only context you store in this browser.",
-  "permissions": ["storage", "unlimitedStorage"],
+  "version": "0.4.0",
+  "description": "A floating helper that turns rough requests into clear prompts, fixes your writing, fills job forms and keeps your files handy. Your data stays in this browser.",
+  "minimum_chrome_version": "116",
+  "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab", "contextMenus", "alarms"],
+  "optional_permissions": ["notifications"],
   "host_permissions": [
     "https://api.anthropic.com/*",
     "https://api.openai.com/*"
   ],
+  "optional_host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",
     "default_title": "Pepper",
@@ -29,7 +32,7 @@
   "commands": {
     "toggle-panel": {
       "suggested_key": { "default": "Alt+Shift+P" },
-      "description": "Open or close the Pepper panel"
+      "description": "Open or close Pepper on this page"
     }
   },
   "content_scripts": [
@@ -41,9 +44,11 @@
         "*://gemini.google.com/*",
         "*://www.perplexity.ai/*",
         "*://perplexity.ai/*",
-        "*://copilot.microsoft.com/*"
+        "*://copilot.microsoft.com/*",
+        "*://copilot.com/*",
+        "*://www.copilot.com/*"
       ],
-      "js": ["lib/core.js", "content.js"],
+      "js": ["lib/core.js", "lib/assist.js", "content.js"],
       "css": ["content.css"],
       "run_at": "document_idle"
     }

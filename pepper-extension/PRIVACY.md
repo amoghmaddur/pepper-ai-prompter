@@ -1,14 +1,14 @@
 # Pepper — The Personal AI Prompter: privacy notice
 
-**Draft for review (Boondoggle step C15). Not yet approved. Every statement marked [needs review] must be checked by a qualified reviewer (step H9) before this notice is published. This draft does not claim compliance with any law.**
+**Draft for review. Every statement marked [needs review] must be checked by a qualified reviewer before this notice is published. This draft does not claim compliance with any law.**
 
-Version 0.3.0. Last updated 2026-10-01.
+Version 0.4.0. Last updated 2026-11-22.
 
 ## The short version
 
-Pepper keeps everything in your own browser. There is no Pepper server, no account, no analytics and no tracking. The only time anything leaves your browser is when you have added your own model key: then the text Pepper needs to write a prompt goes to the provider you chose (Anthropic or OpenAI), and nowhere else.
+Pepper keeps everything in your own browser. There is no Pepper server, no account, no analytics and no tracking. The only time anything leaves your browser is when you have added your own model key: then the text Pepper needs goes to the provider you chose (Anthropic or OpenAI), and nowhere else.
 
-Pepper saves the prompts you send, the replies and your ratings only on sites where you have turned learning on. Learning is off on all five sites until you turn it on.
+Pepper saves the prompts you send, the replies and your ratings only on AI sites where you have turned learning on. Learning is off until you turn it on.
 
 ## What Pepper stores, and where
 
@@ -16,20 +16,29 @@ Everything below is kept in your browser's extension storage (`chrome.storage.lo
 
 | Storage key | What it holds | When it is written |
 |---|---|---|
-| `pepper_settings` | Whether Pepper is on, your provider, your API key, the model name, the typing-hint length, whether you finished onboarding | When you change a setting |
-| `pepper_profile` | Your answers to the up-to-15 "About you" questions | When you answer them |
+| `pepper_settings` | Whether Pepper is on, where it floats, which features are on, your provider, your API key, the model name, the typing-hint length | When you change a setting |
+| `pepper_profile` | Your setup answers: what to call you, your role, favorite AI sites, what you use AI for, how you like answers, your tone, your focus time, and the optional prompt preferences | When you answer them |
+| `pepper_details` | Personal details you chose to keep for forms, such as your name, email, phone, links, address, school and current job | When you edit them |
+| `pepper_pocket` | The list of things in your Pocket: file names, sizes and types, any text Pepper can use from them, links you saved and templates you wrote | When you add, edit or remove an item |
+| `pepper_blob_…` | The contents of each file in your Pocket, one entry per file | When you add a file |
+| `pepper_reminders` | Your reminders: text, time, days and whether each is on | When you change them |
 | `pepper_memories` | Facts you asked Pepper to remember, each on or off | When you add, edit, confirm or delete one |
-| `pepper_projects` | Your projects: name, type, description, which files are attached | When you create or edit a project |
+| `pepper_projects` | Your projects: name, type, description and which Pocket files are attached | When you create or edit a project |
 | `pepper_active_project` | Which project is active | When you pick one |
-| `pepper_files` | Files you added: name, size, type and their text (up to 200,000 characters each) | When you add a file or paste its text |
 | `pepper_saved_prompts` | Prompts you clicked Save on | When you click Save |
-| `pepper_consent` | Whether learning is on for each of the five sites | When you change it |
-| `pepper_history` | Only on sites with learning on: each prompt you sent, the rough request you typed into Pepper (if you used it), whether it went through Pepper and how closely it matched, the approach used, the project, the site, the time, the reply (up to 4,000 characters) and your star rating | When you press send on that site, and when the reply finishes |
-| `pepper_learning` | What Pepper worked out from your rated history: the best approach and typical length per kind of work, the numbers behind it, when you last reset it, and facts you dismissed so they aren't suggested again | Recalculated whenever history or consent changes |
-| `pepper_ui` | Where you dragged the peppercorn on each site | When you move it |
+| `pepper_consent` | Whether learning is on for each of the five AI sites | When you change it |
+| `pepper_history` | Only on AI sites with learning on: each prompt you sent, the rough request you typed into Pepper (if you used it), whether it went through Pepper and how closely it matched, the approach, the project, the site, the time, the reply (up to 4,000 characters) and your star rating | When you press send on that site, and when the reply finishes |
+| `pepper_learning` | What Pepper worked out from your rated history: the best approach and typical length per kind of work, the numbers behind it, when you last reset it, and facts you dismissed | Recalculated whenever history or consent changes |
+| `pepper_ui` | Where you dragged the peppercorn on each site, sites where you hid it, and hints you dismissed | When you move it, hide it or dismiss a hint |
 | `pepper_schema` | The storage format version, used to upgrade your data safely | On install and update |
 
-Pepper never reads the rest of the page you are on. On the five AI sites it reads the prompt box, and, only where learning is on, the newest reply after you press send.
+When you send a prompt from another page to an AI site, Pepper holds it in the browser's session storage for up to two minutes, tied to the tab it opened, and deletes it once it is placed in the box.
+
+## What Pepper reads on the pages you visit
+
+- **On the five AI sites** (chatgpt.com, chat.openai.com, claude.ai, gemini.google.com, perplexity.ai and copilot.microsoft.com), Pepper reads the prompt box and, only where learning is on, the newest reply after you press send.
+- **On other sites, only where Pepper is running:** that is every site if you chose "Keep floating everywhere" and your browser allowed it, or a single tab when you call Pepper there with Alt+Shift+P, the toolbar button or the right-click menu. There Pepper reads the text you select, the text field you are typing in when you ask it to fix something, the labels of form fields (to recognize ones it can fill) and, if you tick "Use this page", the page's title, address and main text.
+- None of this is stored or sent anywhere unless you act on it: saving to your Pocket, filling a form, or using a model key.
 
 ## How long it is kept
 
@@ -39,46 +48,68 @@ History older than 90 days is deleted automatically, and Pepper keeps at most 2,
 
 Only if you have added an API key. Pepper sends these to the one provider you chose (`api.anthropic.com` or `api.openai.com`), using your key:
 
-1. **When you click "Write my prompt":** what you typed into Pepper; your profile answers; your active memories; the active project's name, type and description; the text of that project's attached files (up to 2,500 characters per file and 6,000 in total); the approach selected; a target length; any assumptions you added.
+1. **When you click "Write my prompt":** what you typed into Pepper; your profile answers; your active memories; the active project's name, type and description; the text of that project's attached files (up to 2,500 characters per file and 6,000 in total); if you ticked "Use this page", the page's address and up to 2,500 characters of its text; the approach; a target length; any assumptions you added.
 2. **When you click Shorter, Longer, More formal or More casual:** the current prompt.
-3. **When you click "Find facts in my prompts" in Memories:** up to 30 of your recorded prompts (the rough request where you used Pepper), each cut to 800 characters.
-4. **When you click "Test connection":** the word "ping".
+3. **When you use Fix, Improve, Shorter, More formal, Similar ideas or Explain:** the text you chose, and your role, tone, audience and things to avoid.
+4. **When you click "Suggest memories":** up to 30 of your recorded prompts, each cut to 800 characters.
+5. **When you click "Test connection":** the word "ping".
 
-**Your profile and the text of your files, including a resume, go to that provider whenever you write a prompt with a key set.** What the provider does with that data is governed by your agreement with them, not by Pepper. [needs review]
+**Your profile, the text of your project files and any text you ask Pepper to fix go to that provider when you use these features with a key set.** What the provider does with that data is governed by your agreement with them, not by Pepper. [needs review]
 
-Your API key is sent only to the provider it belongs to. It is never sent anywhere else, never logged, never shown on the AI sites and never included in an export.
+Your personal details and the contents of Pocket files are never sent to a model provider. Your API key is sent only to the provider it belongs to. It is never sent anywhere else, never logged, never shown on web pages and never included in an export.
 
-Without a key, nothing leaves your browser. Pepper writes the prompt with its built-in template on your device.
+Without a key, nothing leaves your browser. Pepper writes prompts and does quick fixes on your device.
+
+## Filling forms and attaching files
+
+Pepper fills a form only when you click Fill, only in empty fields, and never submits anything. It attaches a file only when you click Attach or drag it onto the page yourself. Whatever you then submit goes to that website under its own terms. [needs review]
+
+Pepper refuses to keep passwords, payment card numbers and government ID numbers in your details, and never fills password, payment or ID fields.
 
 ## What happens on the AI sites
 
-When you click Insert, Pepper places the prompt in the site's own prompt box. It never presses send. When you press send, the prompt goes to that site under that site's own terms and privacy policy, exactly as if you had typed it. [needs review]
+When you click Insert, or send a prompt from another page, Pepper places the prompt in the site's own prompt box. It never presses send. When you press send, the prompt goes to that site under that site's own terms and privacy policy, exactly as if you had typed it. [needs review]
 
 If Pepper can't place the prompt in the box, it copies it to your clipboard and tells you.
+
+## Reminders
+
+If you turn on reminders, Pepper asks your browser for permission to show notifications and shows them at the times you set. Reminders are scheduled inside your browser; nothing is sent anywhere.
 
 ## What Pepper never collects
 
 - No analytics, telemetry, crash reports or usage statistics.
-- No account, email address or name, unless you type them into your own profile or files.
-- No browsing history. Pepper runs only on chatgpt.com, chat.openai.com, claude.ai, gemini.google.com, perplexity.ai and copilot.microsoft.com.
-- Nothing is recorded while Pepper is switched off, or on a site where learning is off.
+- No account. No name or email, unless you type them into your own profile or details.
+- No browsing history. Pepper doesn't keep a record of the pages you visit.
+- Nothing is recorded while Pepper is switched off, or on an AI site where learning is off.
 
 ## How you stay in control
 
-In the dashboard under **Privacy and data** you can:
+In the dashboard you can:
 
-- turn learning on or off for each site, or for all five at once (turning it off mid-reply discards the pending record);
-- switch Pepper off everywhere, which hides it and stops all recording;
-- delete any single history record, or all history;
-- export everything as a JSON file (your API key and settings are left out);
+- turn learning on or off for each AI site, or for all five at once (turning it off mid-reply discards the pending record);
+- choose where Pepper floats, hide it on any site, or switch it off everywhere;
+- turn each feature (Pocket, writing helper, autofill, reminders) on or off;
+- edit or delete any detail, Pocket item, memory, reminder or history record, or all history;
+- export your data as a JSON file (your API key and file contents are left out);
 - remove your API key;
 - delete everything Pepper has stored.
 
-Under **What Pepper learned** you can see what Pepper concluded and reset it for any kind of work.
+Under **History → What Pepper learned** you can see what Pepper concluded and reset it for any kind of work.
+
+## Permissions Pepper asks for
+
+- **Storage:** to keep your data in this browser.
+- **Scripting and active tab:** to open Pepper on a page when you ask for it, and on every site if you choose "Keep floating everywhere".
+- **Context menus:** for the right-click "Save to Pepper's Pocket" and "Fix or improve with Pepper".
+- **Alarms:** to schedule your reminders.
+- **Notifications (asked only when you turn on reminders).**
+- **Access to all sites (asked only when you choose "Keep floating everywhere").**
+- **api.anthropic.com and api.openai.com:** to reach your model provider when you add a key.
 
 ## Uninstalling
 
-Removing Pepper from your browser deletes everything in its extension storage on that device. [needs review: confirm current Chrome and Edge behaviour]
+Removing Pepper from your browser deletes everything in its extension storage on that device. [needs review: confirm current Chrome, Brave and Edge behaviour]
 
 ## Who this notice is from, and how to ask questions
 

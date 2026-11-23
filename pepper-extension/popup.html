@@ -10,22 +10,30 @@
 <main class="pop">
   <header class="ph">
     <span class="corn-mark" aria-hidden="true"></span>
-    <div class="grow"><b class="brandname">Pepper</b><small id="masterHelp">On for the five AI sites</small></div>
+    <div class="grow"><b class="brandname" id="hello">Pepper</b><small id="masterHelp"></small></div>
     <label class="switch" title="Turn Pepper on or off everywhere"><input type="checkbox" id="master" aria-label="Pepper on or off" aria-describedby="masterHelp"><i></i></label>
   </header>
 
-  <section class="here" id="here"></section>
+  <section class="setup" id="setup" hidden>
+    <p><b>Let's set Pepper up first.</b> Two minutes, and everything fits the way you work.</p>
+    <button class="btn primary" id="setupGo">Set up Pepper</button>
+  </section>
 
-  <dl class="figs" id="figs"></dl>
-
-  <p class="nudge" id="nudge" hidden></p>
+  <div id="ready" hidden>
+    <section class="here" id="here"></section>
+    <label class="line"><span><b>Keep floating everywhere</b><small id="floatHelp"></small></span>
+      <span class="switch"><input type="checkbox" id="floating" aria-label="Keep floating everywhere"><i></i></span></label>
+    <section class="favs"><small>Open</small><div id="favs"></div></section>
+    <p class="nudge" id="nudge" hidden></p>
+  </div>
 
   <footer class="pf">
-    <button class="btn primary" id="dash">Open dashboard</button>
-    <button class="btn" id="about">About you</button>
+    <button class="btn primary" id="dash">Dashboard</button>
+    <button class="btn" id="pocket">Pocket</button>
   </footer>
 </main>
 <script src="lib/core.js"></script>
+<script src="lib/assist.js"></script>
 <script src="popup.js"></script>
 </body>
 </html>
