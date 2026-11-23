@@ -18,15 +18,15 @@ To open it locally, open `demo/index.html` in a browser. When `core.js` isn't be
 
 ## Video walkthrough
 
-`media/pepper-demo.mp4` (about 2 minutes) and `media/pepper-demo.gif` (the compose → insert → rate loop, for the README).
+`media/pepper-demo.mp4` (about 90 seconds: setup, a prompt on ChatGPT, Fix on an article, a hand-off to Claude, the Pocket, filling a job form, the dashboard) and `media/pepper-demo.gif` (Fix and Fill, for the README).
 
 `record/record-demo.js` drives the real extension with Playwright on the local mock sites from `pepper-tests/e2e/mock-sites.js`, with the model API mocked. It adds an on-screen cursor and captions, then uses ffmpeg to produce the MP4, the GIF, the poster frame and the README screenshots. Like the browser tests, it uses the test copy of the extension whose shadow root is `open`, the only difference from the shipped build, so Playwright can click inside the panel.
 
 ```bash
 cd pepper-tests && npm install && npx playwright install chromium
-PEPPER_CHANNEL=msedge node ../demo/record/record-demo.js
+PEPPER_BROWSER=brave node ../demo/record/record-demo.js
 ```
 
 This needs ffmpeg on `PATH` (or `FFMPEG=/path/to/ffmpeg`). Leave out `PEPPER_CHANNEL` to use Playwright's Chromium. Branded Google Chrome ignores `--load-extension`, so it can't be used.
 
-Maya and the other people are fictional. The video skips Copilot because it was recorded in Edge, which blocks extensions on `copilot.microsoft.com`.
+Maya and the other people are fictional. The hand-off opens a second tab; the recorder records each tab and stitches the clips together in order.
