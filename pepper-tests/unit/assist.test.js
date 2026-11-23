@@ -246,3 +246,27 @@ test("Word: text comes out of a .docx, paragraphs and entities intact; anything 
   assert.equal(await A.extractDocxText(Buffer.from("not a zip at all")), "");
   assert.equal(await A.extractDocxText(new Uint8Array(0)), "");
 });
+
+/* ---------------- review fixes ---------------- */
+test("Fix: code lines and line breaks are left exactly as written", () => {
+  const cases = [
+    ["Summary\nSummary of results is good.", "Summary\nSummary of results is good."],
+    ["def f(x):\n    return x", "def f(x):\n    return x"],
+    ["for i in range(3)", "for i in range(3)"],
+    ["const x = a && b;", "const x = a && b;"],
+    ["$ npm install teh-thing", "$ npm install teh-thing"],
+    ["notes:\n```\nteh  code\n```\nteh end", "Notes:\n```\nteh  code\n```\nThe end"]
+  ];
+  for (const [src, want] of cases) assert.equal(A.tidyText(src).text, want, JSON.stringify(src));
+  assert.equal(A.tidyText("the plan\n\nthe  end").text, "The plan\n\nThe end", "paragraphs stay; only spaces inside a line collapse");
+  assert.equal(A.looksLikeCode("Call me (maybe) tomorrow."), false, "prose with brackets isn't code");
+});
+test("Autofill: a label that names two details is skipped unless the field's name settles it", () => {
+  assert.equal(F({ label: "City, State" }), null);
+  assert.equal(F({ label: "City, State", name: "location_city" }), "city");
+  assert.equal(F({ label: "Phone or email" }), null, "two unrelated details: leave it");
+  assert.equal(F({ label: "GitHub or portfolio URL" }), "github", "your GitHub link answers it");
+  assert.equal(F({ label: "Preferred first name" }), "preferredName", "a narrower detail still wins over the broader one");
+  assert.equal(F({ label: "Email address" }), "email");
+  assert.equal(F({ label: "", name: "city", aria: "" }), "city", "the name alone is enough when there's no label");
+});

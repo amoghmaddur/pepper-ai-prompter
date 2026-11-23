@@ -143,7 +143,7 @@ test("M7 learning recomputes in the writer after a rating, and ignores sites wit
 
 test("N8 the worker calls only the chosen provider host, with the key, and never returns the key", async () => {
   const bg = await freshBg();
-  await bg.send({ type: "STORE", op: { op: "objPatch", key: "pepper_settings", patch: { provider: "anthropic", apiKey: "sk-secret" } } }, bg.fromExt);
+  await bg.send({ type: "SET_KEY", provider: "anthropic", apiKey: "sk-secret" }, bg.fromExt);
   const r = await bg.send({ type: "LLM", system: "s", user: "u", maxTokens: 10 }, bg.fromPage("chatgpt.com"));
   assert.equal(r.ok, true);
   assert.equal(bg.fetchCalls.length, 1);
@@ -151,7 +151,7 @@ test("N8 the worker calls only the chosen provider host, with the key, and never
   assert.equal(bg.fetchCalls[0].init.headers["x-api-key"], "sk-secret");
   assert.equal(JSON.parse(bg.fetchCalls[0].init.body).model, C.DEFAULT_MODELS.anthropic);
   assert.ok(!JSON.stringify(r).includes("sk-secret"));
-  await bg.send({ type: "STORE", op: { op: "objPatch", key: "pepper_settings", patch: { provider: "openai", apiKey: "sk-o" } } }, bg.fromExt);
+  await bg.send({ type: "SET_KEY", provider: "openai", apiKey: "sk-o" }, bg.fromExt);
   bg.sandbox.__fetchImpl = async () => ({ ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "OK" } }] }) });
   await bg.send({ type: "LLM", system: "s", user: "u", maxTokens: 10 }, bg.fromExt);
   assert.equal(new URL(bg.fetchCalls[1].url).host, "api.openai.com");
@@ -162,18 +162,26 @@ test("M8 no key → NO_KEY without any network call; HTTP error surfaces the pro
   const bg = await freshBg();
   assert.equal((await bg.send({ type: "LLM", system: "s", user: "u" }, bg.fromExt)).error, "NO_KEY");
   assert.equal(bg.fetchCalls.length, 0);
-  await bg.send({ type: "STORE", op: { op: "objPatch", key: "pepper_settings", patch: { provider: "anthropic", apiKey: "k" } } }, bg.fromExt);
+  await bg.send({ type: "SET_KEY", provider: "anthropic", apiKey: "k" }, bg.fromExt);
   bg.sandbox.__fetchImpl = async () => ({ ok: false, status: 429, json: async () => ({ error: { message: "rate limited" } }) });
   const r = await bg.send({ type: "LLM", system: "s", user: "u" }, bg.fromExt);
   assert.deepEqual([r.ok, r.error, r.status], [false, "rate limited", 429]);
 });
 
-test("Export excludes pepper_settings (the key) — dashboard export logic", async () => {
-  // The dashboard deletes pepper_settings before building the file; mirror that and check nothing else holds the key.
+test("The key is kept in the worker's vault, never in storage web pages' scripts can read, and isn't exported", async () => {
   const bg = await freshBg();
-  await bg.send({ type: "STORE", op: { op: "objPatch", key: "pepper_settings", patch: { provider: "anthropic", apiKey: "sk-secret" } } }, bg.fromExt);
-  const all = await bg.storage.get(null); delete all.pepper_settings;
-  assert.ok(!JSON.stringify(all).includes("sk-secret"));
+  await bg.send({ type: "SET_KEY", provider: "anthropic", apiKey: "sk-secret-123456" }, bg.fromExt);
+  const all = await bg.storage.get(null);
+  assert.ok(!JSON.stringify(all).includes("sk-secret"), "nothing in chrome.storage holds the key");
+  assert.deepEqual([all.pepper_settings.hasKey, all.pepper_settings.keyHint], [true, "…3456"]);
+  assert.equal(bg.vault().apiKey, "sk-secret-123456");
+  // and a settings write can't smuggle a key into storage
+  await bg.send({ type: "STORE", op: { op: "objPatch", key: "pepper_settings", patch: { apiKey: "sk-smuggled" } } }, bg.fromExt);
+  assert.ok(!JSON.stringify(await bg.storage.get(null)).includes("sk-smuggled"));
+  assert.equal(await bg.send({ type: "SET_KEY", provider: "anthropic", apiKey: "x" }, bg.fromPage("example.com")), "NO_RESPONSE", "pages can't set the key");
+  await bg.send({ type: "SET_KEY", provider: "none" }, bg.fromExt);
+  assert.equal(bg.vault().apiKey, undefined, "removing the key deletes it");
+  assert.equal((await bg.storage.get("pepper_settings")).pepper_settings.hasKey, false);
   const src = require("fs").readFileSync(require("path").join(__dirname, "../../pepper-extension/dashboard.js"), "utf8");
   assert.match(src, /delete s\.pepper_settings;/);
 });
@@ -183,5 +191,5 @@ test("WIPE from an extension page clears everything and restores safe defaults",
   await bg.send({ type: "STORE", op: { op: "listAdd", key: "pepper_history", item: rec("claude.ai") } }, bg.fromPage("claude.ai"));
   await bg.send({ type: "WIPE" }, bg.fromExt);
   const d = bg.storage._raw();
-  assert.deepEqual(d.pepper_history, []); assert.deepEqual(d.pepper_consent, C.defaultConsent()); assert.equal(d.pepper_settings.apiKey, "");
+  assert.deepEqual(d.pepper_history, []); assert.deepEqual(d.pepper_consent, C.defaultConsent()); assert.equal(d.pepper_settings.hasKey, false);
 });

@@ -49,6 +49,7 @@ Pepper's setup opens: about two minutes, one question per screen. Its features u
 - **Your data stays here.** Everything lives in `chrome.storage.local`. No Pepper server, account or analytics. Every-site access and notifications are *optional* permissions, requested only when you turn those on.
 - **Never acts for you.** Pepper never presses send, never submits a form, fills only empty fields, and refuses to store or fill passwords, card numbers and ID numbers.
 - **Injection-resistant.** File and page text travel as labelled data blocks, never as instructions, and fake closing tags are defused, so "ignore previous instructions" in a resume can't change the prompt's Role.
+- **Secrets kept apart.** Your API key and file contents live in a database only Pepper's own pages and worker can open, not in storage that code on web pages can reach. Autofill ignores fields a page hides from view.
 - **Pages can't steer it.** The panel lives in a closed shadow root. Web pages may only make a short whitelist of writes (links and text to the Pocket, history where you allowed learning); prompt hand-offs can only be claimed by the tab Pepper opened, on the right site.
 - **No lost writes.** Every list write goes through one serialized queue in the service worker; a control test shows the same race losing records without it.
 - **Consent per site, off by default.** Learning records only on AI sites you turn it on for, and turning it off mid-reply discards the pending record.
@@ -57,8 +58,8 @@ Pepper's setup opens: about two minutes, one question per screen. Its features u
 
 | | What | Result |
 |---|---|---|
-| Unit | 129 tests: prompt engine, autofill matching, quick fixes, reminders, the Pocket, onboarding rules, the real worker in a fake Chrome with racing storage, page wiring, the privacy notice, the package | **129 / 129** |
-| Browser | 35 checks with the extension loaded: onboarding, every tool, insert without sending, hand-offs, drag and attach, form filling, consent gates, closed shadow root, data controls | **35 / 35 in Chromium 153, Brave 157 and Edge 154** |
+| Unit | 133 tests: prompt engine, autofill matching, quick fixes, reminders, the Pocket, onboarding rules, the real worker in a fake Chrome with racing storage, page wiring, the privacy notice, the package | **133 / 133** |
+| Browser | 36 checks with the extension loaded: onboarding, every tool, insert without sending, hand-offs, drag and attach, form filling (and never filling hidden fields), keyboard use, consent gates, closed shadow root, data controls | **36 / 36 in Chromium 153, Brave 157 and Edge 154** |
 | Live sites | Logged out, 2026-11-22: Pepper appears, opens and inserts into the real box, nothing sent | **Gemini ✓, Perplexity ✓**. ChatGPT and Claude show bot checks to automated browsers; Copilot asks for sign-in |
 
 ```bash
@@ -83,6 +84,7 @@ node e2e/live-check.js                     # the real sites, logged out; never s
 - AI sites redesign often. Gemini and Perplexity were checked live; ChatGPT and Claude were checked on faithful mock pages, because they block automated browsers. Please try them in your own browser.
 - Microsoft Edge blocks all extensions on Copilot by design; Copilot works in Chrome and Brave.
 - PDF text isn't read (Word files are); paste a PDF's text into its Pocket entry if prompts should use it.
+- Text you type into Pepper's panel on a website can be seen by that site's own scripts, like anything typed on the page.
 - Branded Google Chrome can't be driven by test automation with an extension loaded, so the automated runs use Chromium, the open-source build Chrome is made from.
 
 ---

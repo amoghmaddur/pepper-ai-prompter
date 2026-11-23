@@ -11,7 +11,9 @@
   window.__pepperInjected = true;
   if (window.top !== window) return; // never inside frames
   const C = globalThis.PepperCore, A = globalThis.PepperAssist;
-  if (!C || !A || !document.documentElement) return;
+  if (!C || !A || !(document.documentElement instanceof HTMLElement)) return; // not in XML or SVG documents
+  // After an update or reload, the old copy's peppercorn is still on open pages but can't do anything.
+  document.querySelectorAll("#pepper-host").forEach(el => el.remove());
   const HOST = location.host;
   const SITE = C.siteForHost(HOST); // an AI site adapter, or null on any other page
   const UI_KEY = SITE ? SITE.id : HOST;
@@ -29,11 +31,11 @@
     for (const [k, v] of Object.entries(KEYMAP)) if (s[k] !== undefined) S[v] = s[k];
     S.settings = redactKey(S.settings);
   }
-  // The content script only needs to know whether a key exists; the key itself stays in the worker.
-  const redactKey = (st) => ({ ...(st || {}), apiKey: st && st.apiKey ? "set" : "" });
+  // The key itself is in the worker's vault, out of reach of web pages; here Pepper only knows whether one is set.
+  const redactKey = (st) => { const c = { ...(st || {}) }; delete c.apiKey; return c; };
   const store = (op) => chrome.runtime.sendMessage({ type: "STORE", op }).catch(e => ({ ok: false, error: String(e) }));
   const send = (msg) => chrome.runtime.sendMessage(msg).catch(e => ({ ok: false, error: String(e && e.message || e) }));
-  const hasKey = () => S.settings.provider && S.settings.provider !== "none" && !!S.settings.apiKey;
+  const hasKey = () => S.settings.provider && S.settings.provider !== "none" && !!S.settings.hasKey;
   const learningOn = () => !!SITE && C.consentAllows(S.settings, S.consent, HOST);
   const ready = () => A.setupComplete(S.profile, S.settings);
   const feature = (id) => ({ ...A.defaultFeatures(), ...(S.settings.features || {}) })[id];
@@ -112,12 +114,17 @@ svg{width:16px;height:16px;display:block;flex:none}
 .orb.small:hover{opacity:1}
 .orb:hover{transform:scale(1.07) rotate(-3deg)}
 .orb:active{cursor:grabbing}
-.orb .pep{width:100%;height:100%;overflow:visible;animation:bob 4.2s ease-in-out infinite}
-.pep .eye{transform-box:fill-box;transform-origin:center;animation:blink 5.3s infinite}
-.pep .eye:last-child{animation-delay:.04s}
+/* Idle Pepper is still, so pages with Pepper floating don't repaint every frame: a blink now and
+   then comes from a timer, and the bob and leaf sway only while you hover or the panel is open. */
+.orb .pep{width:100%;height:100%;overflow:visible}
+.orb:hover .pep,.wrap.awake .orb .pep{animation:bob 4.2s ease-in-out infinite}
+.pep .eye{transform-box:fill-box;transform-origin:center;transition:transform .08s ease-in}
+.pep.blink .eye{transform:scaleY(.1)}
 .pep .pupil{transform:translate(var(--px,0px),var(--py,0px));transition:transform .12s ease-out}
 .pep .joy{opacity:0}
-.pep .leaf{transform-box:fill-box;transform-origin:left center;animation:leaf 6s ease-in-out infinite}
+.pep .leaf{transform-box:fill-box;transform-origin:left center}
+.orb:hover .pep .leaf,.wrap.awake .orb .pep .leaf{animation:leaf 6s ease-in-out infinite}
+.wrap.down{flex-direction:column-reverse}
 .orb.happy .pep .eyes{opacity:0}.orb.happy .pep .joy{opacity:1}
 .orb.happy .pep{animation:hop .7s ease-out 2}
 .orb.think .pep .pupil{transform:translate(1.2px,-1.6px)}
@@ -129,7 +136,6 @@ svg{width:16px;height:16px;display:block;flex:none}
 .orb.typed .dot,.orb.alert .dot{display:block}
 .orb.rec .pep{filter:drop-shadow(0 0 0 var(--corn));animation:rec 1.8s ease-in-out infinite}
 @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-2.5px)}}
-@keyframes blink{0%,94%,100%{transform:scaleY(1)}96.5%{transform:scaleY(.1)}}
 @keyframes leaf{0%,100%{transform:rotate(0)}50%{transform:rotate(-9deg)}}
 @keyframes hop{0%{transform:translateY(0)}35%{transform:translateY(-7px) scale(1.04)}70%{transform:translateY(0) scale(.98)}}
 @keyframes dots{from{clip-path:inset(0 100% 0 0)}to{clip-path:inset(0 0 0 0)}}
@@ -479,6 +485,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   }
   ["keydown", "keyup", "keypress", "paste", "copy", "cut"].forEach(t => window.addEventListener(t, shieldKeys, true));
   function panelKey(e) {
+    if (!e.isTrusted) return; // a page can't drive Pepper with made-up key presses
     const active = root.activeElement;
     if (e.key === "Escape") { if (panel.classList.contains("show")) { e.preventDefault(); closePanel(); orb.focus(); } return; }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && active === $("raw")) { e.preventDefault(); runExpand(); }
@@ -494,31 +501,63 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     orb.classList.add(name);
     if (ms) moodTimer = setTimeout(() => orb.classList.remove(name), ms);
   }
-  // Eyes follow the pointer, a little.
-  let eyeRaf = 0;
+  // Eyes follow the pointer, a little: only the visible peppercorns, from a cached position.
+  const orbPep = orb.querySelector(".pep"), miniPep = root.querySelector(".mini .pep");
+  let eyeRaf = 0, orbCenter = null, eyesAway = false;
+  function setEyes(x, y) {
+    for (const p of [orbPep, panel.classList.contains("show") ? miniPep : null]) if (p) { p.style.setProperty("--px", x.toFixed(2) + "px"); p.style.setProperty("--py", y.toFixed(2) + "px"); }
+  }
   window.addEventListener("pointermove", (e) => {
-    if (eyeRaf || wrap.hidden) return;
+    if (eyeRaf || wrap.hidden || !hostEl.isConnected || document.hidden) return;
+    const ex = e.clientX, ey = e.clientY;
     eyeRaf = requestAnimationFrame(() => {
       eyeRaf = 0;
-      const r = orb.getBoundingClientRect();
-      if (!r.width) return;
-      const dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
-      const d = Math.hypot(dx, dy) || 1, k = Math.min(1, d / 300);
-      root.querySelectorAll(".pep").forEach(p => { p.style.setProperty("--px", (dx / d * 1.4 * k).toFixed(2) + "px"); p.style.setProperty("--py", (dy / d * 1.4 * k).toFixed(2) + "px"); });
+      if (!orbCenter) { const r = orb.getBoundingClientRect(); if (!r.width) return; orbCenter = { x: r.left + r.width / 2, y: r.top + r.height / 2 }; }
+      const dx = ex - orbCenter.x, dy = ey - orbCenter.y, d = Math.hypot(dx, dy) || 1;
+      if (d > 700) { if (!eyesAway) { eyesAway = true; setEyes(0, 0); } return; }
+      eyesAway = false;
+      const k = Math.min(1, d / 300);
+      setEyes(dx / d * 1.4 * k, dy / d * 1.4 * k);
     });
   }, { passive: true });
+  // A blink every few seconds, from a timer rather than a running animation.
+  (function blinkSoon() {
+    setTimeout(() => {
+      if (!hostEl.isConnected) return;
+      if (!wrap.hidden && !document.hidden) {
+        const peps = root.querySelectorAll(".pep");
+        peps.forEach(p => p.classList.add("blink"));
+        setTimeout(() => peps.forEach(p => p.classList.remove("blink")), 150);
+      }
+      blinkSoon();
+    }, 3500 + Math.random() * 3500);
+  })();
 
   /* ---------------- position: drag Pepper anywhere; she remembers per site ---------------- */
+  let placed = {};
   function placeHost(pos) {
-    const p = pos || {};
+    const p = placed = pos || {};
     const side = p.side === "left" ? "left" : "right";
     const x = Math.max(8, Math.min(innerWidth - 70, +p.x || 18));
     const y = Math.max(8, Math.min(innerHeight - 70, +p.bottom || 24));
+    // High on the screen, Pepper opens downwards so the panel fits.
+    const down = y > innerHeight * 0.55;
     hostEl.style.left = side === "left" ? x + "px" : "auto";
     hostEl.style.right = side === "right" ? x + "px" : "auto";
-    hostEl.style.bottom = y + "px";
+    hostEl.style.top = down ? Math.max(8, innerHeight - y - 54) + "px" : "auto";
+    hostEl.style.bottom = down ? "auto" : y + "px";
     wrap.classList.toggle("left", side === "left");
+    wrap.classList.toggle("down", down);
+    orbCenter = null;
   }
+  /** The panel never runs off the screen: it gets the room between Pepper and the screen's edge. */
+  function fitPanel() {
+    if (!panel.classList.contains("show")) return;
+    const r = orb.getBoundingClientRect();
+    const room = wrap.classList.contains("down") ? innerHeight - r.bottom - 22 : r.top - 22;
+    panel.style.maxHeight = Math.max(240, Math.min(room, 760)) + "px";
+  }
+  window.addEventListener("resize", () => { placeHost(placed); fitPanel(); }, { passive: true });
   let drag = null;
   orb.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
@@ -542,7 +581,8 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     if (d.moved) { patchUi({ pos: d.pos }); return; }
     togglePanel();
   });
-  orb.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); togglePanel(); } });
+  // Enter or Space on the focused peppercorn arrives as a click with no pointer behind it (detail 0).
+  orb.addEventListener("click", (e) => { if (e.isTrusted && e.detail === 0) togglePanel(); });
 
   /* ---------------- files dropped on Pepper go into the Pocket ---------------- */
   for (const el of [orb, panel]) {
@@ -584,6 +624,8 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     }
     renderFooter();
     panel.classList.add("show");
+    wrap.classList.add("awake");
+    fitPanel();
     orb.classList.remove("typed", "alert");
     setTimeout(() => {
       if (gate) $("gateGo").focus();
@@ -592,7 +634,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
       else if (tab === "pocket") $("pq").focus();
     }, 0);
   }
-  function closePanel() { panel.classList.remove("show"); if (uiFor().hidden && !SITE) wrap.hidden = true; }
+  function closePanel() { panel.classList.remove("show"); wrap.classList.remove("awake"); refreshVisibility(); }
   $("close").onclick = () => { closePanel(); orb.focus(); };
   $("dash").onclick = () => send({ type: "OPEN_PAGE", page: "dashboard.html" });
   $("back").onclick = () => showCompose();
@@ -1119,18 +1161,15 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   }
   async function fileFor(item) {
     if (fileCache.has(item.id)) return fileCache.get(item.id);
-    let bytes;
-    if (item.hasBlob) {
-      const k = A.blobKey(item.id);
-      const b64 = (await chrome.storage.local.get(k))[k];
-      if (!b64) return null;
-      bytes = A.base64ToBytes(b64);
-    } else bytes = new TextEncoder().encode(item.text || "");
-    const f = new File([bytes], item.name, { type: item.mime || "application/octet-stream" });
+    // File contents live in the worker's vault, out of reach of web pages; Pepper asks for one when you use it.
+    const r = await send({ type: "POCKET_GET_FILE", id: item.id });
+    if (!r || !r.ok || !r.data) return null;
+    const f = new File([A.base64ToBytes(r.data)], item.name, { type: item.mime || "application/octet-stream" });
     fileCache.set(item.id, f);
     return f;
   }
-  const fileInputs = () => [...document.querySelectorAll('input[type="file"]')].filter(el => !hostEl.contains(el) && !el.disabled);
+  // Only upload fields a person can see (or whose visible button or label stands in for them).
+  const fileInputs = () => [...document.querySelectorAll('input[type="file"]')].filter(el => !hostEl.contains(el) && !el.disabled && uploadVisible(el));
   const vars = () => A.templateVars(answers(), S.details);
 
   function renderPocket() {
@@ -1235,7 +1274,18 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     }
     const f = await fileFor(item);
     if (!f) { toast("Couldn't read that file."); return; }
-    if (a === "open") { const url = URL.createObjectURL(f); window.open(url, "_blank", "noopener"); setTimeout(() => URL.revokeObjectURL(url), 60000); return; }
+    if (a === "open") {
+      // A file opened here would belong to this site, so anything that could run code (HTML, SVG,
+      // unknown types) is downloaded instead; text is shown as plain text.
+      const kind = A.fileKind(item.name, item.mime);
+      const viewable = kind === "text" || /^(application\/pdf|image\/(png|jpe?g|gif|webp|bmp)|audio\/|video\/)/.test(item.mime || "");
+      const blob = kind === "text" ? new Blob([f], { type: "text/plain;charset=utf-8" }) : f;
+      const url = URL.createObjectURL(blob);
+      if (viewable && !/svg|html|xml/i.test(item.mime || "")) window.open(url, "_blank", "noopener");
+      else { const link = document.createElement("a"); link.href = url; link.download = item.name; link.click(); toast(`Downloading ${item.name}.`); }
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      return;
+    }
     if (a === "attach") {
       const inputs = fileInputs();
       const target = inputs.find(i => A.isResumeLabel(fieldDescriptor(i).label + " " + (i.name || "") + " " + (i.id || ""))) || inputs[0];
@@ -1261,11 +1311,18 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     if (lb) return lb.split(/\s+/).map(id => (document.getElementById(id) || {}).innerText || "").join(" ");
     const wrapL = el.closest("label");
     if (wrapL) return wrapL.innerText;
-    let p = el.parentElement;
-    for (let i = 0; i < 3 && p; i++, p = p.parentElement) {
-      const t = [...p.childNodes].filter(n => n !== el && !(n.contains && n.contains(el)) && !(n.querySelector && n.querySelector("input,select,textarea")))
-        .map(n => n.textContent || "").join(" ").replace(/\s+/g, " ").trim();
-      if (t && t.length < 80) return t;
+    // Otherwise the nearest text just before the field, climbing only while the container holds no other field.
+    const FIELD = "input:not([type=hidden]),select,textarea";
+    let node = el;
+    for (let level = 0; level < 3 && node; level++) {
+      for (let prev = node.previousSibling; prev; prev = prev.previousSibling) {
+        if (prev.nodeType === 1 && (prev.matches(FIELD) || prev.querySelector(FIELD))) return "";
+        const t = (prev.textContent || "").replace(/\s+/g, " ").trim();
+        if (t) return t.length < 80 ? t : "";
+      }
+      const parent = node.parentElement;
+      if (!parent || parent.querySelectorAll(FIELD).length > 1) return "";
+      node = parent;
     }
     return "";
   }
@@ -1273,17 +1330,51 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     return { tag: el.tagName.toLowerCase(), type: el.type || "", name: el.name || "", id: el.id || "", autocomplete: el.getAttribute("autocomplete") || "",
       label: labelFor(el), placeholder: el.placeholder || "", aria: el.getAttribute("aria-label") || "" };
   }
-  const shown = (el) => !!(el.getClientRects().length && getComputedStyle(el).visibility !== "hidden");
+  /** A field a person can actually see: a real size, not transparent, on the page, and not covered.
+      Pages can hide extra fields to collect details you didn't mean to give, so those are never filled. */
+  function onScreen(el, min = 8) {
+    const r = el.getBoundingClientRect();
+    if (r.width < min || r.height < min) return false;
+    if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
+    if (!el.checkVisibility && getComputedStyle(el).visibility === "hidden") return false;
+    if (parseFloat(getComputedStyle(el).opacity) < 0.1) return false;
+    const doc = document.documentElement;
+    if (r.right + scrollX <= 0 || r.bottom + scrollY <= 0 || r.left + scrollX >= Math.max(doc.scrollWidth, innerWidth) || r.top + scrollY >= Math.max(doc.scrollHeight, innerHeight)) return false;
+    if (r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth) {
+      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      // Something on top only counts if it's not part of the field's own wrapper (floating labels sit over empty fields).
+      const own = el.parentElement && el.parentElement.parentElement;
+      if (hit && hit !== el && !el.contains(hit) && hit !== hostEl && !(own && own.contains(hit)) && !(el.labels && [...el.labels].some(l => l.contains(hit)))) return false;
+    }
+    return true;
+  }
+  // Upload inputs are often hidden behind a styled button, so the input, its label or its container must be visible.
+  const uploadVisible = (el) => onScreen(el) || [...(el.labels || []), el.parentElement].some(x => x && onScreen(x, 16));
+  const formOf = (el) => el.form || (el.closest && el.closest("form")) || null;
   function scanFields() {
-    const fields = [], fileFields = [];
+    let fields = [], fileFields = [];
     for (const el of document.querySelectorAll("input, select, textarea")) {
       if (hostEl.contains(el) || el.disabled || el.readOnly) continue;
-      if (el.type === "file") { const d = fieldDescriptor(el); fileFields.push({ el, label: d.label || d.name || "File upload", resume: A.isResumeLabel(d.label + " " + d.name + " " + d.id + " " + (el.accept || "")) }); continue; }
-      if (!shown(el)) continue;
+      if (el.type === "file") {
+        if (!uploadVisible(el)) continue;
+        const d = fieldDescriptor(el);
+        fileFields.push({ el, label: d.label || d.name || "File upload", resume: A.isResumeLabel(d.label + " " + d.name + " " + d.id + " " + (el.accept || "")) });
+        continue;
+      }
+      if (!onScreen(el)) continue;
       const c = A.classifyField(fieldDescriptor(el));
       if (!c) continue;
       const value = A.detailValue(c.key, S.details);
       fields.push({ el, key: c.key, label: (A.DETAILS.find(d => d.id === c.key) || {}).label || c.key, value, filled: !!(el.value && String(el.value).trim()) });
+    }
+    // One form at a time: the one you were last typing in, otherwise the one with the most fields Pepper knows.
+    const forms = new Map();
+    for (const f of [...fields, ...fileFields]) { const k = formOf(f.el); forms.set(k, (forms.get(k) || 0) + 1); }
+    if (forms.size > 1) {
+      const mine = lastEditable && lastEditable.isConnected ? formOf(lastEditable) : undefined;
+      const pick = mine !== undefined && forms.has(mine) ? mine : [...forms.entries()].sort((x, y) => y[1] - x[1])[0][0];
+      fields = fields.filter(f => formOf(f.el) === pick);
+      fileFields = fileFields.filter(f => formOf(f.el) === pick);
     }
     return { fields, files: fileFields };
   }
@@ -1323,7 +1414,8 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     let n = 0;
     $("fillBody").querySelectorAll("input[data-i]:checked").forEach(c => {
       const f = formCache.fields[+c.dataset.i];
-      if (f && f.el.isConnected && setFieldValue(f.el, f.value)) n++;
+      // Still there, still visible, and still empty now: never overwrite something you typed after the scan.
+      if (f && f.el.isConnected && !String(f.el.value || "").trim() && onScreen(f.el) && setFieldValue(f.el, f.value)) n++;
     });
     toast(n ? `Filled ${n} field${n === 1 ? "" : "s"}. Check them before you submit.` : "Nothing was filled.");
     if (n) mood("happy", 1600);
@@ -1397,7 +1489,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   function maybePill() {
     clearTimeout(pillTimer);
     pillTimer = setTimeout(() => {
-      if (!ready() || !feature("writing") || S.settings.selectionButton === false || S.settings.enabled === false || panel.classList.contains("show")
+      if (!hostEl.isConnected || !floatsHere() || !ready() || !feature("writing") || S.settings.selectionButton === false || S.settings.enabled === false || panel.classList.contains("show")
         || (!SITE && uiFor().hidden) || document.fullscreenElement) return hidePill();
       // A text field with a selection comes first: its range sits outside the field and has no
       // on-screen box, so place the pill by the field. Otherwise use the page selection's box.
@@ -1573,22 +1665,30 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     if (pending) { pending.cancelled = true; pending = null; }
     orb.classList.remove("rec", "typed");
   }
+  // Where Pepper shows: on the AI sites; everywhere if the user chose that; or on a page they called it to.
+  let summoned = false;
+  const floatsHere = () => !!SITE || summoned || (S.settings.floating === "everywhere" && ready());
+  function refreshVisibility() {
+    const on = S.settings.enabled !== false;
+    const open = panel.classList.contains("show");
+    const hiddenHere = !SITE && !!uiFor().hidden;
+    wrap.hidden = !on || !!document.fullscreenElement || (!open && (hiddenHere || !floatsHere()));
+  }
   function applyEnabled() {
     const on = S.settings.enabled !== false;
-    const hiddenHere = !SITE && !!uiFor().hidden && !panel.classList.contains("show");
-    wrap.hidden = !on || hiddenHere || !!document.fullscreenElement;
+    if (!on) { panel.classList.remove("show"); wrap.classList.remove("awake"); rate.classList.remove("show"); hidePill(); }
+    refreshVisibility();
     orb.classList.toggle("alert", on && !ready());
-    if (on && ready()) bind(); else if (!on) { closePanel(); rate.classList.remove("show"); hidePill(); unbind(); }
-    else unbind(); // not set up yet: Pepper shows, but records nothing
+    if (on && ready()) bind(); else unbind(); // off, or not set up yet: nothing is recorded
   }
   document.addEventListener("fullscreenchange", applyEnabled);
 
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (sender.id !== chrome.runtime.id || !msg) return;
     if (msg.type === "PING") { sendResponse({ pong: true }); return; }
+    if ((msg.type === "TOGGLE_PANEL" || msg.type === "OPEN_PANEL") && S.settings.enabled !== false) summoned = true;
     if (msg.type === "TOGGLE_PANEL" && S.settings.enabled !== false) togglePanel();
     if (msg.type === "OPEN_PANEL" && S.settings.enabled !== false) { if (panel.classList.contains("show") && !msg.tab) return; openPanel({ tab: msg.tab, text: msg.text }); }
-    if (msg.type === "TOAST" && msg.text) { wrap.hidden = false; toast(String(msg.text)); mood("happy", 1200); }
     // The popup asks which site this tab is, so it needs no "tabs" permission.
     if (msg.type === "WHO") sendResponse({ site: SITE ? SITE.id : null, name: SITE ? SITE.name : HOST, host: HOST, ai: !!SITE });
   });

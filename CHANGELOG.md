@@ -32,10 +32,24 @@ Pepper grows from a prompt writer on five AI sites into a small companion that f
 - On Perplexity, the prompt box wasn't found after the site's redesign.
 - On Copilot, Pepper didn't load after the move to copilot.com.
 
+### Reviewed
+
+An independent review of 0.4 before release found 14 problems. All are fixed, with tests:
+
+- Autofill now ignores fields you can't see (off-screen, transparent, tiny or covered), works in one form at a time, and re-checks that a field is still empty when you click Fill, so a page can't use hidden fields to collect your details.
+- Your API key and the contents of Pocket files moved out of `chrome.storage` (which the part of Pepper running on web pages can read) into an extension-only database. Big files are no longer broadcast to every open tab when they change.
+- Pepper ignores key presses a page fakes. (Text you type into Pepper's panel on a website can still be seen by that site's scripts; the privacy notice says so.)
+- Opening an HTML or SVG file from the Pocket downloads it instead of running it as the site you're on.
+- After an update, open pages no longer show two peppercorns; switching to "Only on AI sites" hides Pepper on pages already open; right-click saves confirm on the toolbar instead of putting Pepper on the page.
+- Quick fixes leave code and line breaks alone; field labels come from the nearest text, never a neighbouring field's; labels that name two details are skipped.
+- The orb opens with Enter or Space; near the top of the screen the panel opens downwards and stays on screen.
+- Re-running setup no longer widens learning consent; reminders don't fire after being turned off, after their snooze is cancelled, or hours late after sleep.
+- Idle Pepper no longer animates every frame on pages where it floats.
+
 ### Verified
 
-- 129 unit tests.
-- 35 browser checks with the extension loaded, run in Chromium 153, Brave 157 and Microsoft Edge 154.
+- 133 unit tests.
+- 36 browser checks with the extension loaded, run in Chromium 153, Brave 157 and Microsoft Edge 154.
 - Live, logged out: Gemini and Perplexity (Pepper appears, opens and inserts into the real box, nothing sent). ChatGPT and Claude show a bot check to automated browsers and need a person; Copilot asks logged-out visitors to sign in.
 
 ## 0.3.0 (2026-10-07)

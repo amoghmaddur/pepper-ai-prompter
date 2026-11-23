@@ -31,7 +31,8 @@ async function load() {
   D.details = { ...(s.pepper_details || {}) };
   D.features = { ...A.defaultFeatures(), ...(st.features || {}) };
   D.floating = st.floating === "ai" || st.floating === "everywhere" ? st.floating : null;
-  D.learn = C.SITES.some(x => s.pepper_consent && s.pepper_consent[x.id] && s.pepper_consent[x.id].learning);
+  D.consent = s.pepper_consent || {};
+  D.learn = D.learnInitial = C.SITES.some(x => D.consent[x.id] && D.consent[x.id].learning);
   D.nudge = !!D.features.reminders;
   D.resume = A.pickResume(s.pepper_pocket);
   if (!Array.isArray(D.answers.q1)) D.answers.q1 = D.answers.q1 ? [D.answers.q1] : [];
@@ -149,7 +150,11 @@ const R = {
     }
   },
   key: {
-    render() { $("provider").value = D.settings.provider || "none"; $("key").value = ""; syncKey(); },
+    render() {
+      $("provider").value = D.settings.provider || "none"; $("key").value = "";
+      $("key").placeholder = D.settings.hasKey ? `A key is saved (${D.settings.keyHint || "hidden"}). Paste a new one to replace it.` : "Paste your key";
+      syncKey();
+    },
     check: () => ""
   },
   done: {
@@ -209,7 +214,8 @@ $("testKey").onclick = async () => {
   const provider = $("provider").value, apiKey = $("key").value.trim();
   const note = $("keyNote");
   if (!apiKey) { note.className = "small bad"; note.textContent = "Paste a key first."; return; }
-  await store({ op: "objPatch", key: "pepper_settings", patch: { provider, apiKey } });
+  await chrome.runtime.sendMessage({ type: "SET_KEY", provider, apiKey });
+  $("key").value = "";
   note.className = "small"; note.textContent = "Testing…";
   const r = await chrome.runtime.sendMessage({ type: "LLM", system: "Reply with the single word OK.", user: "ping", maxTokens: 16 });
   if (r && r.ok) { note.className = "small ok"; note.textContent = `Connected to ${r.model}.`; }
@@ -222,13 +228,18 @@ async function saveProgress() {
 }
 async function finish() {
   const settingsPatch = { onboarded: true, floating: D.floating, features: D.features };
-  if ($("provider").value === "none") Object.assign(settingsPatch, { provider: "none", apiKey: "" });
-  else if ($("key").value.trim()) Object.assign(settingsPatch, { provider: $("provider").value, apiKey: $("key").value.trim() });
+  // Keys go to the worker's vault, never into settings.
+  if ($("provider").value === "none") await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" });
+  else if ($("key").value.trim()) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: $("provider").value, apiKey: $("key").value.trim() });
   await store({ op: "objPatch", key: "pepper_settings", patch: settingsPatch });
   if (D.features.autofill || Object.keys(D.details).length) await store({ op: "set", key: "pepper_details", value: D.details });
-  const consent = {};
-  C.SITES.forEach(s => { consent[s.id] = { learning: D.learn && (D.answers.q1 || []).includes(s.name) }; });
-  await store({ op: "objPatch", key: "pepper_consent", patch: consent });
+  // Learning consent changes only if the switch was changed here: turning it on covers your favorite sites,
+  // turning it off covers all. Re-running setup never widens what someone already allowed site by site.
+  if (D.learn !== D.learnInitial) {
+    const consent = {};
+    C.SITES.forEach(s => { consent[s.id] = { learning: D.learn ? ((D.answers.q1 || []).includes(s.name) || !!(D.consent[s.id] && D.consent[s.id].learning)) : false }; });
+    await store({ op: "objPatch", key: "pepper_consent", patch: consent });
+  }
   const cur = (await chrome.storage.local.get("pepper_reminders")).pepper_reminders || [];
   const focus = A.focusReminder(D.answers);
   const others = cur.filter(r => r.id !== "focus");

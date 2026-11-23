@@ -37,7 +37,7 @@ test("Docs: every storage key the code writes is described in the privacy notice
   const keys = new Set([...code.matchAll(/\b(pepper_[a-z_]+)\b/g)].map(m => m[1]).filter(k => k !== "pepper_files" && !k.startsWith("pepper_blob")));
   const missing = [...keys].filter(k => !notice.includes("`" + k + "`"));
   assert.deepEqual(missing, []);
-  assert.ok(notice.includes("`pepper_blob_…`"));
+  assert.ok(notice.includes("`pepper-vault`"), "the notice says where the key and file contents live");
 });
 test("Docs: the product name is exact in every page title", () => {
   for (const f of ["dashboard.html", "onboarding.html", "privacy.html"]) {

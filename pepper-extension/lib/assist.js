@@ -102,6 +102,7 @@
     { id: "pronouns", label: "Pronouns", re: /pronoun/ }
   ];
   const DETAIL_IDS = DETAILS.map(d => d.id);
+  const NARROWER = { preferredName: ["firstName", "fullName"], email: ["address"], website: ["address"], linkedin: ["website"], github: ["website"], firstName: ["fullName"], lastName: ["fullName"] };
   // Never filled, never stored: secrets, payment and government identifiers.
   const SKIP_RE = /pass(word|code)|\botp\b|one.?time|captcha|search|coupon|promo|card|cvv|cvc|security.?code|\bssn\b|social.?security|national.?id|passport|\btax\b|routing|account.?(number|no)|iban|swift|salary|compensation|username|user.?name|login|birth|\bdob\b|\bage\b/;
   const SKIP_TYPES = new Set(["password", "hidden", "file", "checkbox", "radio", "submit", "button", "reset", "image", "search", "range", "color", "date", "datetime-local", "month", "week", "time"]);
@@ -119,9 +120,16 @@
     if (type === "email") return { key: "email", via: "type" };
     if (type === "tel") return { key: "phone", via: "type" };
     if (!hay) return null;
-    for (const det of DETAILS) {
-      if (det.whole && parts.some(p => det.whole.test(p))) return { key: det.id, via: "label" };
-      if (det.re.test(hay)) return { key: det.id, via: "label" };
+    // Evidence in order: label, aria-label, placeholder, then name and id. A clue that names two
+    // details ("City, State") is ambiguous; a later clue may settle it, otherwise Pepper leaves the field.
+    let maybe = null;
+    for (const p of parts) {
+      let hits = DETAILS.filter(det => (det.whole && det.whole.test(p)) || det.re.test(p)).map(d => d.id);
+      // A narrower detail wins over the broader one it overlaps ("Preferred first name", "Email address").
+      if (hits.length > 1 && hits.slice(1).every(h => (NARROWER[hits[0]] || []).includes(h))) hits = [hits[0]];
+      const pick = maybe ? hits.filter(h => maybe.includes(h)) : hits;
+      if (pick.length === 1) return { key: pick[0], via: "label" };
+      if (pick.length > 1 && !maybe) maybe = pick;
     }
     return null;
   }
@@ -207,6 +215,13 @@
     .split(",").reduce((o, p) => { const [a, b] = p.split(":"); o[a] = b; return o; }, {});
   const keepCase = (from, to) => from[0] === from[0].toUpperCase() && from[0] !== from[0].toLowerCase() ? to[0].toUpperCase() + to.slice(1) : to;
 
+  /** A line of code rather than prose: indented, ending in a brace or semicolon, a call, or a keyword line. */
+  function looksLikeCode(line) {
+    const l = String(line);
+    if (!l.trim()) return false;
+    return /^( {2,}|\t)\S/.test(l) || /[{};]\s*$/.test(l) || /^\s*(def|class|import|from|return|const|let|var|function|if|elif|else|for|while|try|except|public|private|#include)\b.*[(:=\[{]/.test(l)
+      || /\w\([^)]*\)\s*[:{]?\s*$/.test(l) && /[=:(]/.test(l) && !/[.!?]\s*$/.test(l) || /^\s*[$>#]\s/.test(l) || /=>|===|!==|&&|\|\|/.test(l);
+  }
   /** Spelling, spacing and capitals, offline. Returns {text, changes:[{from,to}]}; code and links are left alone. */
   function tidyText(input) {
     const src = String(input || "");
@@ -214,7 +229,9 @@
     const note = (from, to, kind) => { if (from !== to && changes.length < 80) changes.push({ from, to, kind: kind || "word" }); };
     // Protect URLs, emails, @handles and `code` from every rule below.
     const keep = [];
-    let t = src.replace(/`[^`]*`|https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|@\w+/g, m => { keep.push(m); return `\u0000${keep.length - 1}\u0000`; });
+    // Code is left exactly as written, line by line.
+    let t = src.split("\n").map(line => looksLikeCode(line) ? (keep.push(line), `\u0000${keep.length - 1}\u0000`) : line).join("\n");
+    t = t.replace(/```[\s\S]*?```|`[^`]*`|https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|@\w+/g, m => { keep.push(m); return `\u0000${keep.length - 1}\u0000`; });
     t = t.replace(/\b([A-Za-z]+)\b/g, (w) => {
       const lw = w.toLowerCase();
       if (lw === "i") { if (w !== "I") note("i", "I", "caps"); return "I"; }
@@ -225,8 +242,8 @@
       const to = fix.startsWith("I'") ? fix : keepCase(w, fix);
       note(w, to); return to;
     });
-    t = t.replace(/\b(\w+)(\s+)\1\b/gi, (m, a, sp) => { if (/^\d+$/.test(a) || /^(had|that|is|very|so|bye|ha|no)$/i.test(a)) return m; note(m, a); return a; });
-    t = t.replace(/[ \t]{2,}/g, () => { note("double space", "single space", "space"); return " "; });
+    t = t.replace(/\b(\w+)([ \t]+)\1\b/gi, (m, a, sp) => { if (/^\d+$/.test(a) || /^(had|that|is|very|so|bye|ha|no)$/i.test(a)) return m; note(m, a); return a; });
+    t = t.replace(/(\S)[ \t]{2,}(?=\S)/g, (m, c) => { note("double space", "single space", "space"); return c + " "; });
     t = t.replace(/([,;])(?=[A-Za-z])/g, (m, p) => { note("no space after " + p, p + " ", "space"); return p + " "; });
     t = t.replace(/ +([,.;:!?])(?=\s|$)/g, (m, p) => { note("space before " + p, p, "space"); return p; });
     const cap = (c) => { note("sentence start", "capital", "caps"); return c.toUpperCase(); };
@@ -445,7 +462,7 @@
     AI_SITES, FOCUS, THINK, FEATURES, REQUIRED, DETAILS, DETAIL_IDS, HELPERS, HELPER_IDS, POCKET_LIMITS, HANDOFF_TTL, ATS_HOSTS,
     defaultFeatures, missingSetup, setupComplete, favorites, defaultLens, firstName, greeting,
     classifyField, detailValue, matchOption, looksLikeCard, sensitiveLabel, templateVars, fillTemplate,
-    tidyText, helperSystem, helperUser, helperPrompt, pageKind, defaultTab, isResumeLabel,
+    tidyText, looksLikeCode, helperSystem, helperUser, helperPrompt, pageKind, defaultTab, isResumeLabel,
     parseTime, nextOccurrence, focusReminder,
     mimeFromName, isTextLike, fileKind, formatBytes, pocketUsage, pocketRejects, pickResume, blobKey, normalizeUrl,
     bytesToBase64, base64ToBytes, extractDocxText

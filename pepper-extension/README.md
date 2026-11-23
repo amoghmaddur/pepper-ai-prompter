@@ -45,7 +45,7 @@ Learning is per AI site and off until you turn it on. With it on, Pepper saves e
 
 ## Privacy, in short
 
-Everything is stored in this browser. No Pepper server, account or analytics. With a model key, the text needed for what you asked goes to that provider and nowhere else; your details and file contents never do. See `PRIVACY.md` (also `privacy.html` in the extension).
+Everything is stored in this browser. No Pepper server, account or analytics. Your API key and file contents are kept in a database only Pepper's own pages can open. With a model key, the text needed for what you asked goes to that provider and nowhere else; your details and file contents never do. See `PRIVACY.md` (also `privacy.html` in the extension).
 
 ## Honest limits
 
@@ -53,3 +53,5 @@ Everything is stored in this browser. No Pepper server, account or analytics. Wi
 - Microsoft Edge blocks all extensions on Copilot by design. Copilot works in Chrome and Brave (and asks logged-out visitors to sign in).
 - PDF text isn't read; paste a PDF's text into its Pocket entry if you want prompts to use it. Word files are read.
 - Dragging a file from the Pocket onto a page relies on the browser carrying it; if a site doesn't accept the drop, use **Attach**.
+- Text you type into Pepper's panel on a website can be seen by that site's own scripts, like anything typed on the page. Don't type secrets into Pepper on a site you don't trust.
+- Fill only fills fields you can see. A field a site keeps hidden (or covered) is skipped on purpose; fill it yourself.

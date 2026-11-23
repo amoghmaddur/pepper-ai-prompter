@@ -30,7 +30,7 @@ function makeChrome({ jitter = 4, granted = {} } = {}) {
   const created = [], tabs = new Map(), notifications = [], injected = [];
   let nextTab = 100;
   const perms = { origins: new Set(granted.origins || []), permissions: new Set(granted.permissions || []) };
-  const alarms = new Map(), registered = new Map(), menus = [];
+  const alarms = new Map(), registered = new Map(), menus = [], badges = [];
   const chrome = {
     runtime: {
       id: "pepper-test-id",
@@ -65,6 +65,9 @@ function makeChrome({ jitter = 4, granted = {} } = {}) {
       executeScript: async (o) => { injected.push(o.target.tabId); return []; },
       insertCSS: async () => {}
     },
+    action: {
+      setBadgeText: async (o) => { badges.push(o.text); }, setBadgeBackgroundColor: async () => {}, setTitle: async () => {}
+    },
     alarms: {
       create: async (name, info) => { alarms.set(name, { name, scheduledTime: info.when || Date.now() + (info.delayInMinutes || 0) * 60000 }); },
       clear: async (name) => alarms.delete(name),
@@ -81,15 +84,48 @@ function makeChrome({ jitter = 4, granted = {} } = {}) {
       onButtonClicked: { addListener: (f) => listeners.notifButton.push(f) }
     };
   }
-  return { chrome, listeners, created, tabs, notifications, injected, perms, alarms, registered, menus };
+  return { chrome, listeners, created, tabs, notifications, injected, perms, alarms, registered, menus, badges };
+}
+
+/** Just enough IndexedDB for the worker's vault: open/upgrade, one object store, get/put/delete/clear. */
+function makeIndexedDB() {
+  const dbs = new Map();
+  const later = (f) => setTimeout(f, Math.random() * 2);
+  return {
+    _dbs: dbs,
+    open(name) {
+      const req = {};
+      later(() => {
+        let isNew = false;
+        if (!dbs.has(name)) { dbs.set(name, new Map()); isNew = true; }
+        const stores = dbs.get(name);
+        const db = {
+          createObjectStore: (n) => { stores.set(n, new Map()); },
+          transaction: (n) => {
+            const t = {}; const data = stores.get(n); let pending = 0, failed = null;
+            const done = () => later(() => { if (pending === 0) (failed ? t.onerror && t.onerror() : t.oncomplete && t.oncomplete()); });
+            const op = (fn) => { const r = {}; pending++; later(() => { try { r.result = fn(); r.onsuccess && r.onsuccess(); } catch (e) { failed = e; } pending--; done(); }); return r; };
+            const clone = (v) => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+            t.objectStore = () => ({ get: (k) => op(() => clone(data.get(k))), put: (v, k) => op(() => { data.set(k, clone(v)); }), delete: (k) => op(() => { data.delete(k); }), clear: () => op(() => data.clear()) });
+            return t;
+          }
+        };
+        req.result = db;
+        if (isNew && req.onupgradeneeded) req.onupgradeneeded();
+        req.onsuccess && req.onsuccess();
+      });
+      return req;
+    }
+  };
 }
 
 /** Loads the shipped background.js (and its lib/ scripts through importScripts) into a sandbox. */
 function loadBackground(opts) {
   const fake = makeChrome(opts);
   const fetchCalls = [];
+  const indexedDB = makeIndexedDB();
   const sandbox = {
-    chrome: fake.chrome, console, setTimeout, clearTimeout, URL, AbortController, crypto: require("crypto").webcrypto,
+    chrome: fake.chrome, console, setTimeout, clearTimeout, URL, AbortController, crypto: require("crypto").webcrypto, indexedDB,
     btoa, atob, TextEncoder, TextDecoder, Blob, Response, DecompressionStream,
     fetch: async (url, init) => { fetchCalls.push({ url, init }); return sandbox.__fetchImpl(url, init); },
     __fetchImpl: async () => ({ ok: true, status: 200, json: async () => ({ content: [{ text: "OK" }] }) })
@@ -112,7 +148,9 @@ function loadBackground(opts) {
   /** Fires storage.onChanged the way the browser would after a write, so the worker reacts. */
   const changed = (ch) => Promise.all(fake.listeners.changed.map(f => f(ch, "local")));
   const settle = (ms = 40) => new Promise(r => setTimeout(r, ms));
-  return { ...fake, sandbox, send, fromPage, fromExt, fetchCalls, storage: fake.chrome.storage.local, session: fake.chrome.storage.session,
+  /** What the worker's vault holds (the API key and file contents). */
+  const vault = () => Object.fromEntries((indexedDB._dbs.get("pepper-vault") || new Map()).get("kv") || []);
+  return { ...fake, sandbox, send, fromPage, fromExt, fetchCalls, vault, storage: fake.chrome.storage.local, session: fake.chrome.storage.session,
     changed, settle, install: (details) => Promise.all(fake.listeners.installed.map(f => f(details))) };
 }
 module.exports = { makeChrome, loadBackground, EXT };

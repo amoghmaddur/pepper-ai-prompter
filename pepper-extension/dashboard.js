@@ -15,7 +15,7 @@ async function load() {
   const s = await chrome.storage.local.get(["pepper_settings", "pepper_profile", "pepper_memories", "pepper_projects", "pepper_pocket", "pepper_details",
     "pepper_saved_prompts", "pepper_history", "pepper_consent", "pepper_learning", "pepper_active_project", "pepper_reminders", "pepper_ui"]);
   D = {
-    settings: { enabled: true, minChars: 6, provider: "none", apiKey: "", model: "", ...(s.pepper_settings || {}) },
+    settings: { enabled: true, minChars: 6, provider: "none", hasKey: false, model: "", ...(s.pepper_settings || {}) },
     profile: s.pepper_profile || { answers: {}, completed: false },
     memories: s.pepper_memories || [], projects: s.pepper_projects || [], pocket: s.pepper_pocket || [], details: s.pepper_details || {},
     saved: s.pepper_saved_prompts || [],
@@ -29,7 +29,8 @@ async function load() {
   D.features = { ...A.defaultFeatures(), ...(D.settings.features || {}) };
 }
 const answers = () => D.profile.answers || {};
-const hasKey = () => D.settings.provider !== "none" && !!D.settings.apiKey;
+// The key itself is in the worker's vault; pages only know whether one is saved, and its last four characters.
+const hasKey = () => D.settings.provider !== "none" && !!D.settings.hasKey;
 const consentCount = () => C.SITES.filter(s => D.consent[s.id] && D.consent[s.id].learning).length;
 const files = () => D.pocket.filter(i => i.kind === "file");
 const setFeature = (id, on) => store({ op: "objPatch", key: "pepper_settings", patch: { features: { ...D.features, [id]: on } } });
@@ -287,9 +288,9 @@ function renderFiles() {
     };
     const dl = row.querySelector("[data-dl]");
     if (dl) dl.onclick = async () => {
-      const k = A.blobKey(id), b64 = (await chrome.storage.local.get(k))[k];
-      if (!b64) return;
-      const url = URL.createObjectURL(new Blob([A.base64ToBytes(b64)], { type: f.mime }));
+      const r = await chrome.runtime.sendMessage({ type: "POCKET_GET_FILE", id });
+      if (!r || !r.ok) return;
+      const url = URL.createObjectURL(new Blob([A.base64ToBytes(r.data)], { type: f.mime }));
       const a = document.createElement("a"); a.href = url; a.download = f.name; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     };
@@ -597,13 +598,14 @@ function renderSettings() {
   }).join("");
   $("consentRows").querySelectorAll("input[data-site]").forEach(i => i.onchange = () => setConsent({ [i.dataset.site]: { learning: i.checked } }));
   $("sProvider").value = D.settings.provider || "none";
-  $("sKey").value = D.settings.apiKey || "";
+  $("sKey").value = "";
+  $("sKey").placeholder = hasKey() ? `A key is saved (${D.settings.keyHint || "hidden"}). Paste a new one to replace it.` : "Paste your key";
   $("sModel").value = D.settings.model || "";
   $("sMin").value = D.settings.minChars || 6;
   syncModelHelp();
   $("histCount2").textContent = `${D.history.length} prompts recorded. Your ratings and what Pepper learned from them go too.`;
   $("keyState").textContent = hasKey() ? `A ${D.settings.provider === "anthropic" ? "Anthropic" : "OpenAI"} key is stored in this browser.` : "No key stored.";
-  $("removeKey").disabled = !D.settings.apiKey;
+  $("removeKey").disabled = !D.settings.hasKey;
 }
 document.querySelectorAll('#floatChoice input').forEach(r => r.onchange = async () => {
   if (r.value === "everywhere") {
@@ -629,9 +631,13 @@ $("sProvider").onchange = syncModelHelp;
 $("showKey").onclick = () => { const k = $("sKey"); k.type = k.type === "password" ? "text" : "password"; $("showKey").textContent = k.type === "password" ? "Show" : "Hide"; };
 $("shortcuts").onclick = () => chrome.tabs.create({ url: navigator.userAgent.includes("Edg/") ? "edge://extensions/shortcuts" : "chrome://extensions/shortcuts" });
 async function saveSettings() {
-  await store({ op: "objPatch", key: "pepper_settings", patch: {
-    provider: $("sProvider").value, apiKey: $("sProvider").value === "none" ? "" : $("sKey").value.trim(), model: $("sModel").value.trim(),
-    minChars: Math.max(2, Math.min(40, +$("sMin").value || 6)) } });
+  const provider = $("sProvider").value, key = $("sKey").value.trim();
+  // Keys go to the worker's vault, never into storage that web pages' scripts could read.
+  if (provider === "none") await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" });
+  else if (key) await chrome.runtime.sendMessage({ type: "SET_KEY", provider, apiKey: key });
+  else await store({ op: "objPatch", key: "pepper_settings", patch: { provider } });
+  await store({ op: "objPatch", key: "pepper_settings", patch: { model: $("sModel").value.trim(), minChars: Math.max(2, Math.min(40, +$("sMin").value || 6)) } });
+  $("sKey").value = "";
 }
 $("settingsForm").onsubmit = async (e) => { e.preventDefault(); await saveSettings(); flashSaved("settingsSaved"); };
 $("testKey").onclick = async () => {
@@ -644,7 +650,7 @@ $("testKey").onclick = async () => {
 $("export").onclick = async () => {
   const s = await chrome.storage.local.get(null);
   delete s.pepper_settings; // settings hold the key: never exported
-  for (const k of Object.keys(s)) if (k.startsWith("pepper_blob_")) delete s[k]; // file contents stay out; download them from the Pocket
+  // File contents and the key live in the worker's vault and aren't exported; download files from the Pocket.
   const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), product: C.PRODUCT, ...s }, null, 2)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "pepper-data.json"; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
@@ -653,7 +659,7 @@ $("clearHist").onclick = async () => {
   if (!confirm("Delete all recorded prompts, replies and ratings? Your profile, Pocket, memories, projects and saved prompts are kept.")) return;
   await store({ op: "listSet", key: "pepper_history", items: [] });
 };
-$("removeKey").onclick = async () => { if (confirm("Remove your API key from this browser?")) await store({ op: "objPatch", key: "pepper_settings", patch: { apiKey: "", provider: "none" } }); };
+$("removeKey").onclick = async () => { if (confirm("Remove your API key from this browser?")) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" }); };
 $("wipe").onclick = async () => {
   if (!confirm("Delete everything Pepper has stored in this browser, including your Pocket and API key? This can't be undone.")) return;
   await chrome.runtime.sendMessage({ type: "WIPE" });

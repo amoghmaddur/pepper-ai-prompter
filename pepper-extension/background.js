@@ -1,6 +1,7 @@
 /* ==========================================================================
    Pepper — The Personal AI Prompter · background worker (v0.4)
    - The only module with network access, limited to the two provider hosts.
+   - The only module that reads the vault (API key, file contents).
    - Every list write from every tab goes through one serialized queue, so two
      tabs never overwrite each other; consent is re-checked before any record
      from a web page is stored, and web pages may only make whitelisted writes.
@@ -28,6 +29,62 @@ const DEFAULT_MEMORIES = [
   { id: "default-1", text: "I write in a plain, humanized tone with no dashes", active: false }
 ];
 
+/* ---------- the vault: the API key and file contents, in an IndexedDB only Pepper's own pages
+   and worker can open. chrome.storage.local is readable by content scripts, so secrets and
+   big blobs don't go there (and blobs there would be broadcast to every tab on each change). ---------- */
+const Vault = (() => {
+  let opening = null;
+  const open = () => opening || (opening = new Promise((resolve, reject) => {
+    const r = indexedDB.open("pepper-vault", 1);
+    r.onupgradeneeded = () => r.result.createObjectStore("kv");
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => { opening = null; reject(r.error); };
+  }));
+  const run = async (mode, fn) => {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const t = db.transaction("kv", mode);
+      const req = fn(t.objectStore("kv"));
+      let out;
+      if (req) req.onsuccess = () => { out = req.result; };
+      t.oncomplete = () => resolve(out);
+      t.onerror = t.onabort = () => reject(t.error);
+    });
+  };
+  return {
+    get: (k) => run("readonly", s => s.get(k)),
+    set: (k, v) => run("readwrite", s => s.put(v, k)),
+    del: (k) => run("readwrite", s => s.delete(k)),
+    clear: () => run("readwrite", s => s.clear())
+  };
+})();
+const keyHint = (k) => (k && k.length > 8 ? "…" + k.slice(-4) : "");
+async function setKey(provider, apiKey) {
+  const p = ["anthropic", "openai"].includes(provider) ? provider : "none";
+  if (p === "none" || !apiKey) {
+    if (p === "none") await Vault.del("apiKey");
+    return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p, ...(p === "none" ? { hasKey: false, keyHint: "" } : {}) } }, false);
+  }
+  await Vault.set("apiKey", String(apiKey).trim());
+  return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p, hasKey: true, keyHint: keyHint(String(apiKey).trim()) } }, false);
+}
+/** Moves a key or file contents left in chrome.storage by earlier versions into the vault. */
+async function moveSecretsToVault() {
+  return locked(async () => {
+    const all = await chrome.storage.local.get(null);
+    const st = all.pepper_settings;
+    if (st && "apiKey" in st) {
+      if (st.apiKey) await Vault.set("apiKey", st.apiKey);
+      const next = { ...st, hasKey: !!st.apiKey || !!st.hasKey, keyHint: st.apiKey ? keyHint(st.apiKey) : (st.keyHint || "") };
+      delete next.apiKey;
+      await chrome.storage.local.set({ pepper_settings: next });
+    }
+    const blobs = Object.keys(all).filter(k => k.startsWith("pepper_blob_"));
+    for (const k of blobs) await Vault.set(k, all[k]);
+    if (blobs.length) await chrome.storage.local.remove(blobs);
+  });
+}
+
 /* ---------- install, update, startup ---------- */
 chrome.runtime.onInstalled.addListener(async (details) => {
   await locked(async () => {
@@ -51,15 +108,16 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") + (update ? "#update" : "") });
     }
   });
+  await moveSecretsToVault();
   setupMenus();
   await syncFloating();
   await syncReminders();
 });
-chrome.runtime.onStartup.addListener(async () => { await syncFloating(); await syncReminders(); });
+chrome.runtime.onStartup.addListener(async () => { await moveSecretsToVault(); await syncFloating(); await syncReminders(); });
 
 function freshData() {
   return {
-    pepper_settings: { enabled: true, minChars: 6, provider: "none", apiKey: "", model: "", onboarded: false,
+    pepper_settings: { enabled: true, minChars: 6, provider: "none", hasKey: false, keyHint: "", model: "", onboarded: false,
       floating: null, features: A.defaultFeatures(), selectionButton: true },
     pepper_memories: DEFAULT_MEMORIES.map(m => ({ ...m })), pepper_history: [], pepper_profile: { answers: {}, completed: false },
     pepper_pocket: [], pepper_details: {}, pepper_reminders: [], pepper_projects: [], pepper_saved_prompts: [],
@@ -125,6 +183,11 @@ const senderHost = (fromContent) => typeof fromContent === "string" ? fromConten
 async function storeOp(op, fromContent) {
   const known = LIST_KEYS.includes(op.key) || OBJ_KEYS.includes(op.key) || VALUE_KEYS.includes(op.key);
   if (!known) return { ok: false, error: "Unknown key" };
+  if (op.key === "pepper_settings") {
+    // The key lives in the vault (setKey); it never goes into storage that web pages' scripts can read.
+    const strip = (o) => { if (!o || typeof o !== "object") return o; const c = { ...o }; delete c.apiKey; return c; };
+    op = { ...op, patch: strip(op.patch), value: strip(op.value) };
+  }
   if (fromContent) {
     if (!CONTENT_ALLOWED.has(op.op + ":" + op.key)) return { ok: false, error: "Not allowed from a web page" };
     if (op.op === "listPatch" && Object.keys(op.patch || {}).some(k => !CONTENT_HISTORY_PATCH_FIELDS.has(k))) return { ok: false, error: "Field not allowed" };
@@ -187,7 +250,8 @@ async function pocketAddFile(msg, fromContent) {
       text: typeof meta.text === "string" ? meta.text.slice(0, 200000) : "", role: meta.role === "resume" ? "resume" : undefined,
       addedAt: new Date().toISOString(), source: fromContent ? "page" : "dashboard" };
     if (item.role === "resume") list.forEach(x => { if (x.role === "resume") delete x.role; });
-    await chrome.storage.local.set({ [A.blobKey(id)]: data, pepper_pocket: [item, ...list] });
+    await Vault.set(A.blobKey(id), data);
+    await chrome.storage.local.set({ pepper_pocket: [item, ...list] });
     return { ok: true, id, item };
   });
 }
@@ -198,9 +262,20 @@ async function pocketRemove(ids) {
     const list = (s.pepper_pocket || []).filter(i => !del.has(String(i.id)));
     const projects = (s.pepper_projects || []).map(p => ({ ...p, fileIds: (p.fileIds || []).filter(f => !del.has(String(f))) }));
     await chrome.storage.local.set({ pepper_pocket: list, pepper_projects: projects });
-    await chrome.storage.local.remove([...del].map(A.blobKey));
+    for (const id of del) await Vault.del(A.blobKey(id));
     return { ok: true };
   });
+}
+
+/** One Pocket file, asked for by Pepper's panel (to attach, drag or open) or the dashboard (to download). */
+async function pocketGetFile(id, fromContent) {
+  const s = await chrome.storage.local.get(["pepper_pocket", "pepper_settings"]);
+  if (fromContent && !featureOn(s.pepper_settings, "pocket")) return { ok: false, error: "The Pocket is turned off" };
+  const item = (s.pepper_pocket || []).find(i => String(i.id) === String(id) && i.kind === "file");
+  if (!item) return { ok: false, error: "Not in your Pocket" };
+  const data = item.hasBlob ? await Vault.get(A.blobKey(item.id)) : A.bytesToBase64(new TextEncoder().encode(item.text || ""));
+  if (!data) return { ok: false, error: "The file's contents are missing" };
+  return { ok: true, data, name: item.name, mime: item.mime };
 }
 
 /* ---------- hand-off: carry a prompt to an AI site's box (never sends) ---------- */
@@ -280,8 +355,13 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (id === "pepper-save-page") item = { kind: "link", url: info.pageUrl || (tab && tab.url), title: (tab && tab.title) || info.pageUrl };
   if (!item) return;
   const r = await storeOp({ op: "listAdd", key: "pepper_pocket", item }, "contextmenu");
-  if (tab && tab.id != null && await ensureInjected(tab.id)) {
-    chrome.tabs.sendMessage(tab.id, { type: "TOAST", text: r.ok ? "Saved to your Pocket." : (r.error || "Couldn't save that.") }).catch(() => {});
+  // A tick on the toolbar button confirms it, without putting Pepper on a page where it isn't floating.
+  if (tab && tab.id != null && chrome.action) {
+    const quiet = (p) => Promise.resolve(p).catch(() => {});
+    quiet(chrome.action.setBadgeBackgroundColor({ tabId: tab.id, color: r.ok ? "#2E6B4A" : "#B5395F" }));
+    quiet(chrome.action.setBadgeText({ tabId: tab.id, text: r.ok ? "\u2713" : "!" }));
+    quiet(chrome.action.setTitle({ tabId: tab.id, title: r.ok ? "Saved to your Pocket" : (r.error || "Couldn't save that") }));
+    setTimeout(() => { quiet(chrome.action.setBadgeText({ tabId: tab.id, text: "" })); quiet(chrome.action.setTitle({ tabId: tab.id, title: "Pepper" })); }, 3000);
   }
 });
 
@@ -322,9 +402,12 @@ async function syncReminders() {
   const s = await chrome.storage.local.get(["pepper_settings", "pepper_reminders"]);
   const on = featureOn(s.pepper_settings, "reminders") && await hasNotifications();
   const list = on ? (s.pepper_reminders || []).filter(r => r && r.enabled !== false) : [];
-  const existing = (await chrome.alarms.getAll()).filter(a => a.name.startsWith("rem:"));
+  const all = await chrome.alarms.getAll();
+  const existing = all.filter(a => a.name.startsWith("rem:"));
   const want = new Map(list.map(r => ["rem:" + r.id, r]));
   for (const a of existing) if (!want.has(a.name)) await chrome.alarms.clear(a.name);
+  // A snoozed reminder doesn't outlive its reminder, or reminders being turned off.
+  for (const a of all.filter(a => a.name.startsWith("snooze:"))) if (!want.has("rem:" + a.name.slice(7))) await chrome.alarms.clear(a.name);
   for (const [name, r] of want) {
     const when = A.nextOccurrence(r.time, r.days, Date.now());
     if (!when) continue;
@@ -335,9 +418,10 @@ async function syncReminders() {
   return { ok: true, count: want.size };
 }
 async function fireReminder(id, test) {
-  const s = await chrome.storage.local.get(["pepper_reminders", "pepper_profile", "pepper_details"]);
+  const s = await chrome.storage.local.get(["pepper_reminders", "pepper_profile", "pepper_details", "pepper_settings"]);
   const r = test ? { id: "test", text: "This is how Pepper will nudge you." } : (s.pepper_reminders || []).find(x => String(x.id) === String(id));
   if (!r || !chrome.notifications) return { ok: false };
+  if (!test && (!featureOn(s.pepper_settings, "reminders") || r.enabled === false)) return { ok: false }; // turned off since it was scheduled
   const answers = (s.pepper_profile && s.pepper_profile.answers) || {};
   const fav = A.favorites(answers)[0];
   const who = A.firstName(answers, s.pepper_details);
@@ -349,10 +433,13 @@ async function fireReminder(id, test) {
   });
   return { ok: true };
 }
+const LATE_MS = 15 * 60 * 1000;
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   const [kind, id] = alarm.name.split(":");
-  if (kind === "rem") { await fireReminder(id); await syncRemindersAfterFire(alarm.name); }
-  if (kind === "snooze") await fireReminder(id);
+  // Missed while the computer slept: a "your focus time starts now" hours later is noise, so skip it.
+  const late = Date.now() - (alarm.scheduledTime || Date.now()) > LATE_MS;
+  if (kind === "rem") { if (!late) await fireReminder(id); await syncRemindersAfterFire(alarm.name); }
+  if (kind === "snooze" && !late) await fireReminder(id);
 });
 async function syncRemindersAfterFire(name) { await chrome.alarms.clear(name); await syncReminders(); }
 let notificationsBound = false;
@@ -399,11 +486,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "STORE": return reply(storeOp(msg.op || {}, fromContent));
     case "POCKET_ADD_FILE": return reply(pocketAddFile(msg, fromContent));
     case "HANDOFF": return reply(handoff(msg, sender));
+    case "POCKET_GET_FILE": return reply(pocketGetFile(msg.id, fromContent));
     case "HANDOFF_CLAIM": return fromContent ? reply(handoffClaim(sender)) : undefined;
   }
   if (fromContent) return; // everything below is for Pepper's own pages
   switch (msg.type) {
     case "POCKET_REMOVE": return reply(pocketRemove(msg.ids || [msg.id]));
+    case "SET_KEY": return reply(setKey(msg.provider, msg.apiKey));
     case "LEARNING_RESET": return reply(learningReset(String(msg.projectType || "General")));
     case "RECOMPUTE": return reply(locked(recomputeLearning).then(() => ({ ok: true })));
     case "SYNC": return reply(Promise.all([syncFloating(), syncReminders()]).then(([f, r]) => ({ ok: true, floating: f.active, reminders: r.count })));
@@ -411,9 +500,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "REMINDER_TEST": return reply(fireReminder("test", true));
     case "WIPE": return reply(locked(async () => {
       const keep = msg.keepKey ? (await chrome.storage.local.get("pepper_settings")).pepper_settings : null;
+      const key = keep && keep.hasKey ? await Vault.get("apiKey") : null;
       await chrome.storage.local.clear();
+      await Vault.clear();
       const data = freshData();
-      if (keep && keep.apiKey) Object.assign(data.pepper_settings, { provider: keep.provider, apiKey: keep.apiKey, model: keep.model });
+      if (key) { await Vault.set("apiKey", key); Object.assign(data.pepper_settings, { provider: keep.provider, hasKey: true, keyHint: keep.keyHint, model: keep.model }); }
       await chrome.storage.local.set(data);
       await chrome.alarms.clearAll();
       return { ok: true };
@@ -424,7 +515,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 /* ---------- model call (exactly two hosts; key never logged or returned) ---------- */
 async function callLLM(system, user, maxTokens) {
   const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
-  const { provider, apiKey } = pepper_settings;
+  const provider = pepper_settings.provider;
+  const apiKey = provider && provider !== "none" ? await Vault.get("apiKey").catch(() => null) : null;
   if (!provider || provider === "none" || !apiKey) return { ok: false, error: "NO_KEY" };
   const model = (pepper_settings.model || "").trim() || C.DEFAULT_MODELS[provider];
   const ctrl = new AbortController();

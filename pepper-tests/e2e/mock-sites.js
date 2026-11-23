@@ -97,6 +97,10 @@ input,select,textarea{font:inherit;padding:8px;border:1px solid #bbb;border-radi
 <label for="resume">Resume/CV</label><input type="file" id="resume" name="job_application[resume]">
 <label for="pw">Create a password</label><input type="password" id="pw">
 <label for="why">Why do you want to work here?</label><textarea id="why"></textarea>
+<!-- fields a person can't see: Pepper must never fill these -->
+<div style="position:absolute;left:-9999px;top:0"><label for="addr">Street address</label><input id="addr" name="address"></div>
+<input id="ghost" name="city" aria-label="City" style="width:1px;height:1px;opacity:0;border:0;padding:0">
+<div style="display:none"><label for="hid">Mobile phone</label><input id="hid"></div>
 <button type="submit">Submit application</button>
 </form><script>
 window.__submitted = 0; window.__changes = {};

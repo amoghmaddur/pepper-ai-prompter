@@ -219,7 +219,8 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
         pepper_projects: [{ id: "p1", name: "Jobs 2026", type: "Job applications", description: "New-grad SWE roles", fileIds: ["f1"] }],
         pepper_active_project: "p1"
       });
-      await storage.patch("pepper_settings", { provider: "anthropic", apiKey: "sk-ant-test" });
+      await storage.setKey("anthropic", "sk-ant-test");
+      assert.ok(!JSON.stringify(await storage.get("pepper_settings")).includes("sk-ant-test"), "the key isn't in storage web pages' scripts can read");
       await wait(400);
       await P(gpt, "#orb").click();
       if (await P(gpt, "#result").isVisible()) await P(gpt, "#back").click();
@@ -264,7 +265,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
     });
 
     await t.test("M7 learned lens is preselected with the reason shown", async () => {
-      await storage.patch("pepper_settings", { provider: "none", apiKey: "" });
+      await storage.setKey("none");
       const now = Date.now();
       const seed = [["role", 5], ["role", 5], ["auto", 3], ["auto", 2], ["clarify", 4]].map(([lens, rating], i) => ({
         id: "seed" + i, site: "chatgpt.com", assisted: true, lens, rating, projectType: "Job applications", raw: "seed " + i,
@@ -312,7 +313,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       await pg.close();
     });
     await t.test("N5 dashboard data controls: delete one, export without key, remove key, clear all", async () => {
-      await storage.patch("pepper_settings", { provider: "anthropic", apiKey: "sk-ant-SECRET-123" });
+      await storage.setKey("anthropic", "sk-ant-SECRET-123");
       const pg = await ctx.newPage();
       await pg.goto(`chrome-extension://${extId}/dashboard.html#history`); await pg.waitForTimeout(500);
       const before = (await storage.get("pepper_history")).length;
@@ -330,8 +331,9 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       assert.equal(data.pepper_history.length, before - 1);
       pg.on("dialog", d => d.accept());
       await pg.click("#removeKey");
-      await until(async () => (await storage.get("pepper_settings")).apiKey === "");
-      assert.equal((await storage.get("pepper_settings")).apiKey, "");
+      await until(async () => (await storage.get("pepper_settings")).hasKey === false);
+      assert.equal((await storage.get("pepper_settings")).hasKey, false);
+      assert.equal(await sw.evaluate(() => Vault.get("apiKey")), undefined, "removed from the vault");
       await pg.click("#clearHist");
       await until(async () => (await storage.get("pepper_history")).length === 0);
       assert.deepEqual(await storage.get("pepper_history"), []);

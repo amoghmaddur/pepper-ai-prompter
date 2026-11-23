@@ -62,13 +62,16 @@ test("Pages can't touch details, reminders, settings or delete Pocket items", as
 });
 
 /* ---------------- Pocket files ---------------- */
-test("Pocket files: bytes under their own key, size measured not trusted, names cleaned, one resume", async () => {
+test("Pocket files: bytes in the vault (not in storage pages can read), size measured not trusted, names cleaned, one resume", async () => {
   const bg = await readyBg();
   let r = await bg.send({ type: "POCKET_ADD_FILE", item: { name: "Maya CV.pdf", mime: "application/pdf", size: 1, role: "resume" }, data: b64(3000) }, bg.fromExt);
   assert.equal(r.ok, true);
   const first = r.item;
   assert.equal(first.size, 3000, "size comes from the bytes");
-  assert.equal(bg.storage._raw()[A.blobKey(first.id)], b64(3000));
+  assert.equal(bg.vault()[A.blobKey(first.id)], b64(3000));
+  assert.ok(!Object.keys(bg.storage._raw()).some(k => k.startsWith("pepper_blob_")), "no file bytes in chrome.storage, so they're never broadcast to tabs");
+  const got = await bg.send({ type: "POCKET_GET_FILE", id: first.id }, bg.fromPage("example.com"));
+  assert.deepEqual([got.ok, got.data, got.name], [true, b64(3000), "Maya CV.pdf"], "the panel gets a file when it asks for it");
   assert.equal(first.role, "resume"); assert.equal(first.hasBlob, true);
   r = await bg.send({ type: "POCKET_ADD_FILE", item: { name: 'new/"resume".docx', role: "resume", text: "Rust" }, data: b64(10) }, bg.fromPage("example.com"));
   assert.equal(r.ok, true);
@@ -82,10 +85,12 @@ test("Pocket files: too large, or Pocket off for a page, is refused before anyth
   const bg = await readyBg();
   const r = await bg.send({ type: "POCKET_ADD_FILE", item: { name: "big.zip" }, data: b64(16 * 1024 * 1024) }, bg.fromExt);
   assert.equal(r.ok, false); assert.match(r.error, /up to 15/);
-  assert.deepEqual(Object.keys(bg.storage._raw()).filter(k => k.startsWith("pepper_blob_")), []);
+  assert.deepEqual(Object.keys(bg.vault()).filter(k => k.startsWith("pepper_blob_")), []);
   const off = await readyBg({}, { features: { ...A.defaultFeatures(), pocket: false } });
   assert.equal((await off.send({ type: "POCKET_ADD_FILE", item: { name: "a.txt" }, data: b64(5) }, off.fromPage("example.com"))).ok, false);
-  assert.equal((await off.send({ type: "POCKET_ADD_FILE", item: { name: "a.txt" }, data: b64(5) }, off.fromExt)).ok, true, "the dashboard can still add files");
+  const added = await off.send({ type: "POCKET_ADD_FILE", item: { name: "a.txt" }, data: b64(5) }, off.fromExt);
+  assert.equal(added.ok, true, "the dashboard can still add files");
+  assert.equal((await off.send({ type: "POCKET_GET_FILE", id: added.id }, off.fromPage("example.com"))).ok, false, "pages can't fetch files while the Pocket is off");
 });
 test("Pocket files: removing one deletes its bytes and detaches it from projects", async () => {
   const bg = await readyBg();
@@ -94,7 +99,7 @@ test("Pocket files: removing one deletes its bytes and detaches it from projects
   await bg.send({ type: "POCKET_REMOVE", id: item.id }, bg.fromExt);
   const d = bg.storage._raw();
   assert.deepEqual(d.pepper_pocket, []);
-  assert.ok(!(A.blobKey(item.id) in d));
+  assert.ok(!(A.blobKey(item.id) in bg.vault()), "its bytes are gone from the vault");
   assert.deepEqual(d.pepper_projects[0].fileIds, ["other"]);
 });
 
@@ -183,13 +188,15 @@ test("Reminders: firing shows a personal notification with the favorite AI, then
 });
 
 /* ---------------- right-click menu and summoning ---------------- */
-test("Right-click: menu items exist; saving a page or link stores a cleaned Pocket link", async () => {
+test("Right-click: menu items exist; saving a page or link stores a cleaned Pocket link, confirmed on the toolbar, without putting Pepper on the page", async () => {
   const bg = await readyBg();
   assert.deepEqual(bg.menus.map(m => m.id).sort(), ["pepper-ask", "pepper-fix", "pepper-save-link", "pepper-save-page", "pepper-save-selection"]);
   await Promise.all(bg.listeners.menu.map(f => f({ menuItemId: "pepper-save-page", pageUrl: "https://jobs.example/apply" }, { id: 9, title: "Apply now" })));
   await Promise.all(bg.listeners.menu.map(f => f({ menuItemId: "pepper-save-link", linkUrl: "javascript:void(0)" }, { id: 9 })));
   await bg.settle();
   assert.deepEqual(pocket(bg).map(i => [i.kind, i.url, i.title]), [["link", "https://jobs.example/apply", "Apply now"]]);
+  assert.deepEqual([...bg.badges.slice(0, 2)].sort(), ["!", "\u2713"].sort(), "a tick for the save, a ! for the refused javascript: link");
+  assert.deepEqual(bg.injected, [], "saving doesn't inject Pepper into the page");
 });
 test("Summon before setup opens onboarding instead of Pepper", async () => {
   const bg = loadBackground();
@@ -236,7 +243,40 @@ test("Wipe: everything goes, alarms and floating included, and setup starts over
   await bg.send({ type: "WIPE" }, bg.fromExt);
   const d = bg.storage._raw();
   assert.deepEqual(d.pepper_pocket, []);
-  assert.deepEqual(Object.keys(d).filter(k => k.startsWith("pepper_blob_")), []);
+  assert.deepEqual(bg.vault(), {}, "the vault is emptied too");
   assert.equal(bg.alarms.size, 0); assert.equal(bg.registered.size, 0);
   assert.equal(A.setupComplete(d.pepper_profile, d.pepper_settings), false);
+});
+
+/* ---------------- review fixes ---------------- */
+test("Update from v0.3: a key and file contents left in storage move into the vault", async () => {
+  const bg = loadBackground();
+  bg.storage._seed({ pepper_schema: 2, pepper_settings: { enabled: true, provider: "anthropic", apiKey: "sk-old-key-9999", floating: "ai" },
+    pepper_profile: { answers: ANSWERS, completed: true }, pepper_history: [], pepper_pocket: [{ id: "f1", kind: "file", name: "a.pdf", hasBlob: true, size: 3 }],
+    pepper_blob_f1: "QUJD" });
+  await bg.install({ reason: "update", previousVersion: "0.4.0" });
+  const d = bg.storage._raw();
+  assert.ok(!JSON.stringify(d).includes("sk-old-key"), "the key left storage");
+  assert.ok(!("pepper_blob_f1" in d), "file bytes left storage");
+  assert.equal(bg.vault().apiKey, "sk-old-key-9999");
+  assert.equal(bg.vault().pepper_blob_f1, "QUJD");
+  assert.deepEqual([d.pepper_settings.hasKey, d.pepper_settings.keyHint], [true, "\u20269999"]);
+  assert.equal((await bg.send({ type: "POCKET_GET_FILE", id: "f1" }, bg.fromExt)).data, "QUJD");
+});
+test("Reminders: nothing fires after reminders are turned off, a snooze doesn't outlive them, and a nudge missed while asleep is skipped", async () => {
+  const bg = await readyBg({ granted: { permissions: ["notifications"] } }, { features: { ...A.defaultFeatures(), reminders: true } });
+  await focusOn(bg);
+  await bg.send({ type: "SYNC" }, bg.fromExt);
+  // missed while asleep: fires 3 hours late → skipped, but the next one is scheduled
+  await Promise.all(bg.listeners.alarm.map(f => f({ name: "rem:focus", scheduledTime: Date.now() - 3 * 3600e3 })));
+  await bg.settle();
+  assert.equal(bg.notifications.length, 0); assert.ok(bg.alarms.has("rem:focus"));
+  // snoozed, then reminders turned off: the snooze is cleared, and a late-arriving alarm does nothing
+  bg.alarms.set("snooze:focus", { name: "snooze:focus", scheduledTime: Date.now() + 60000 });
+  await bg.send({ type: "STORE", op: { op: "objPatch", key: "pepper_settings", patch: { features: { ...A.defaultFeatures(), reminders: false } } } }, bg.fromExt);
+  await bg.send({ type: "SYNC" }, bg.fromExt);
+  assert.equal(bg.alarms.size, 0, "rem: and snooze: alarms are cleared");
+  await Promise.all(bg.listeners.alarm.map(f => f({ name: "rem:focus", scheduledTime: Date.now() })));
+  await bg.settle();
+  assert.equal(bg.notifications.length, 0, "a reminder that was turned off never shows");
 });

@@ -84,6 +84,8 @@ async function launch({ open = false, grant = [], onApi, launchOptions = {} } = 
       c[site] = { learning: on }; await chrome.storage.local.set({ pepper_consent: c });
     }, [site, on])
   };
+  /** Saves a model key the way the dashboard does: into the worker's vault, never into storage. */
+  storage.setKey = (provider, key) => sw.evaluate(([p, k]) => setKey(p, k), [provider, key]);
   /** Finishes setup the way onboarding would, merging any test-specific answers and settings. */
   storage.completeSetup = async (answers = {}, settings = {}) => {
     await storage.set({ pepper_profile: { answers: { ...SETUP_ANSWERS, ...answers }, completed: true } });

@@ -108,10 +108,28 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       page = await ctx.newPage(); watch(page); await page.goto("https://example.org/"); await page.waitForTimeout(1000);
       assert.ok(await hostWidth(page) > 0, "Pepper floats on an ordinary page");
       await storage.patch("pepper_settings", { floating: "ai" }); await sw.evaluate(() => syncFloating());
+      await until(async () => (await hostWidth(page)) === 0, 3000);
+      assert.equal(await hostWidth(page), 0, "hidden on the page that was already open, too");
       const p2 = await ctx.newPage(); await p2.goto("https://example.org/?2"); await p2.waitForTimeout(800);
       assert.equal(await hostWidth(p2), -1, "not injected when floating is AI-sites-only");
       await p2.close();
       await storage.patch("pepper_settings", { floating: "everywhere" }); await sw.evaluate(() => syncFloating());
+      await until(async () => (await hostWidth(page)) > 0, 3000);
+    });
+
+    await t.test("Keyboard and placement: Enter opens Pepper; near the top of the screen the panel opens downwards and stays on screen", async () => {
+      await P(page, "#orb").focus(); await page.keyboard.press("Enter");
+      await P(page, "#panel").waitFor({ state: "visible", timeout: 3000 });
+      await page.keyboard.press("Escape");
+      await until(async () => !(await P(page, "#panel").isVisible()), 2000);
+      await storage.patch("pepper_ui", { "example.org": { pos: { side: "right", x: 18, bottom: 760 } } });
+      await page.reload(); await page.waitForTimeout(900);
+      await P(page, "#orb").click();
+      const box = await P(page, "#panel").boundingBox();
+      assert.ok(box.y >= 0 && box.y + box.height <= 860 + 1, `panel inside the screen (top ${Math.round(box.y)}, bottom ${Math.round(box.y + box.height)})`);
+      assert.ok(await P(page, "#close").isVisible());
+      await P(page, "#close").click();
+      await storage.patch("pepper_ui", { "example.org": {} }); await page.reload(); await page.waitForTimeout(900);
     });
 
     await t.test("Writing helper: select text in a field, Pepper's pill appears, Fix corrects it offline and Replace puts it back", async () => {
@@ -151,7 +169,7 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
 
     await t.test("Writing helper with a key: Improve and Similar ideas come from the model, with the text as data", async () => {
       await closeP(page);
-      await storage.patch("pepper_settings", { provider: "anthropic", apiKey: "sk-ant-test" }); await wait(300);
+      await storage.setKey("anthropic", "sk-ant-test"); await wait(300);
       await page.evaluate(() => { const r = document.createRange(); r.selectNodeContents(document.getElementById("para")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
       await P(page, "#pill").waitFor({ state: "visible", timeout: 4000 });
       await P(page, "#pillFix").click();
@@ -161,7 +179,7 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       assert.match(await P(page, "#fixText").textContent(), /fewer interruptions/);
       assert.match(apiCalls[0].messages[0].content, /^<text>\nRemote work boosts focus/);
       assert.ok(!apiCalls[0].system.includes("Remote work boosts"), "the text is not in the instructions");
-      await storage.patch("pepper_settings", { provider: "none", apiKey: "" }); await wait(300);
+      await storage.setKey("none"); await wait(300);
       await P(page, "#close").click();
     });
 
@@ -191,7 +209,15 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       resumeId = item.id;
       assert.equal(item.role, "resume", "named like a resume, and the first one");
       assert.equal(item.size, 26);
-      assert.equal(await storage.get("pepper_blob_" + item.id), Buffer.from("%PDF-1.4 fake resume bytes").toString("base64"));
+      assert.equal(await sw.evaluate((k) => Vault.get(k), "pepper_blob_" + item.id), Buffer.from("%PDF-1.4 fake resume bytes").toString("base64"), "the bytes are in the worker's vault");
+      assert.equal(await storage.get("pepper_blob_" + item.id), undefined, "and not in storage web pages' scripts can read");
+      await P(page, "#pFile").setInputFiles({ name: "notes.html", mimeType: "text/html", buffer: Buffer.from("<script>window.__ran=1</script>hi") });
+      const html = await until(async () => ((await storage.get("pepper_pocket")) || []).find(i => i.name === "notes.html"));
+      await P(page, '.filters button[data-f="file"]').click();
+      const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 5000 }), P(page, `.pi[data-id="${html.id}"] button[data-a="open"]`).click()]);
+      assert.equal(dl.suggestedFilename(), "notes.html", "HTML is downloaded, never opened as this site");
+      assert.equal(await page.evaluate(() => window.__ran), undefined);
+      await P(page, '.filters button[data-f="all"]').click();
       await P(page, "#pSavePage").click();
       await until(async () => (await storage.get("pepper_pocket")).some(i => i.kind === "link" && i.url === "https://example.org/"));
       await storage.patch("pepper_details", { fullName: "Maya Rao" });
@@ -240,8 +266,10 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       assert.match(await P(job, "#ctxChip").textContent(), /Form · \d+ fields I can fill/);
       await wait(400); await job.screenshot({ path: path.join(SHOTS, "v04-fill.png") });
       await P(job, "#fillGo").click();
-      const v = await job.evaluate(() => Object.fromEntries(["first_name", "last_name", "email", "phone", "li", "country", "city", "pw", "why"].map(id => [id, document.getElementById(id).value])));
-      assert.deepEqual(v, { first_name: "Maya", last_name: "Rao", email: "maya@example.com", phone: "617-555-0100", li: "https://linkedin.com/in/maya", country: "US", city: "Already typed", pw: "", why: "" });
+      const v = await job.evaluate(() => Object.fromEntries(["first_name", "last_name", "email", "phone", "li", "country", "city", "pw", "why", "addr", "ghost", "hid"].map(id => [id, document.getElementById(id).value])));
+      assert.deepEqual(v, { first_name: "Maya", last_name: "Rao", email: "maya@example.com", phone: "617-555-0100", li: "https://linkedin.com/in/maya", country: "US", city: "Already typed", pw: "", why: "",
+        addr: "", ghost: "", hid: "" }, "fields a person can't see stay empty");
+      assert.doesNotMatch(await P(job, "#fillBody").textContent(), /Street address/, "and aren't even listed");
       await P(job, '#fillBody button[data-attach="0"]').click();
       assert.equal(await job.evaluate(() => window.__changes.resume), "Maya_Resume.pdf", "the site saw the file arrive");
       assert.equal(await job.evaluate(() => window.__submitted), 0, "never submits");

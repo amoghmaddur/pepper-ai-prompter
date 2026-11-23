@@ -16,11 +16,10 @@ Everything below is kept in your browser's extension storage (`chrome.storage.lo
 
 | Storage key | What it holds | When it is written |
 |---|---|---|
-| `pepper_settings` | Whether Pepper is on, where it floats, which features are on, your provider, your API key, the model name, the typing-hint length | When you change a setting |
+| `pepper_settings` | Whether Pepper is on, where it floats, which features are on, your provider, whether a key is saved and its last four characters, the model name, the typing-hint length | When you change a setting |
 | `pepper_profile` | Your setup answers: what to call you, your role, favorite AI sites, what you use AI for, how you like answers, your tone, your focus time, and the optional prompt preferences | When you answer them |
 | `pepper_details` | Personal details you chose to keep for forms, such as your name, email, phone, links, address, school and current job | When you edit them |
 | `pepper_pocket` | The list of things in your Pocket: file names, sizes and types, any text Pepper can use from them, links you saved and templates you wrote | When you add, edit or remove an item |
-| `pepper_blob_…` | The contents of each file in your Pocket, one entry per file | When you add a file |
 | `pepper_reminders` | Your reminders: text, time, days and whether each is on | When you change them |
 | `pepper_memories` | Facts you asked Pepper to remember, each on or off | When you add, edit, confirm or delete one |
 | `pepper_projects` | Your projects: name, type, description and which Pocket files are attached | When you create or edit a project |
@@ -32,6 +31,8 @@ Everything below is kept in your browser's extension storage (`chrome.storage.lo
 | `pepper_ui` | Where you dragged the peppercorn on each site, sites where you hid it, and hints you dismissed | When you move it, hide it or dismiss a hint |
 | `pepper_schema` | The storage format version, used to upgrade your data safely | On install and update |
 
+**Your API key and the contents of the files in your Pocket are kept apart,** in a database inside the extension (IndexedDB, named `pepper-vault`) that only Pepper's own pages and its background worker can open. Scripts on web pages can't read it, and neither can the part of Pepper that runs on web pages: its panel asks the worker for a file only when you attach, drag or open it.
+
 When you send a prompt from another page to an AI site, Pepper holds it in the browser's session storage for up to two minutes, tied to the tab it opened, and deletes it once it is placed in the box.
 
 ## What Pepper reads on the pages you visit
@@ -39,6 +40,7 @@ When you send a prompt from another page to an AI site, Pepper holds it in the b
 - **On the five AI sites** (chatgpt.com, chat.openai.com, claude.ai, gemini.google.com, perplexity.ai and copilot.microsoft.com), Pepper reads the prompt box and, only where learning is on, the newest reply after you press send.
 - **On other sites, only where Pepper is running:** that is every site if you chose "Keep floating everywhere" and your browser allowed it, or a single tab when you call Pepper there with Alt+Shift+P, the toolbar button or the right-click menu. There Pepper reads the text you select, the text field you are typing in when you ask it to fix something, the labels of form fields (to recognize ones it can fill) and, if you tick "Use this page", the page's title, address and main text.
 - None of this is stored or sent anywhere unless you act on it: saving to your Pocket, filling a form, or using a model key.
+- What you type into Pepper's panel on a website can be seen by that website's own scripts, the same as anything else typed on that page. Don't type secrets into Pepper on a site you don't trust. [needs review]
 
 ## How long it is kept
 
@@ -62,7 +64,7 @@ Without a key, nothing leaves your browser. Pepper writes prompts and does quick
 
 ## Filling forms and attaching files
 
-Pepper fills a form only when you click Fill, only in empty fields, and never submits anything. It attaches a file only when you click Attach or drag it onto the page yourself. Whatever you then submit goes to that website under its own terms. [needs review]
+Pepper fills a form only when you click Fill, only in empty fields that you can see on the screen, and never submits anything. Fields a page hides from view are never filled. It attaches a file only when you click Attach or drag it onto the page yourself. Whatever you then submit goes to that website under its own terms. [needs review]
 
 Pepper refuses to keep passwords, payment card numbers and government ID numbers in your details, and never fills password, payment or ID fields.
 
