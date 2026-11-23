@@ -115,6 +115,8 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
 
     await t.test("compose: orb opens the panel; template path returns six sections", async () => {
       await P(gpt, "#orb").click();
+      await gpt.waitForTimeout(300);
+      await gpt.screenshot({ path: path.join(SHOTS, "panel-open.png") }); // what the panel shows first (kept by CI)
       await P(gpt, "#raw").fill("write a cover letter for the Stripe new-grad SWE role");
       await gpt.screenshot({ path: path.join(SHOTS, "panel-compose.png") });
       await P(gpt, "#go").click();
