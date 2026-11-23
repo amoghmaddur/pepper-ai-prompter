@@ -7,8 +7,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = (op) => chrome.runtime.sendMessage({ type: "STORE", op });
 
-const STEPS = ["welcome", "you", "sites", "uses", "style", "focus", "float", "powers", "kit", "key", "done"];
-const TONES = ["Professional", "Friendly", "Casual", "Academic"];
+const STEPS = ["welcome", "you", "sites", "uses", "focus", "float", "powers", "kit", "key", "done"];
 const USES = C.QUESTIONS.find(q => q.id === "q2").opts;
 let step = 0;
 let D = { answers: {}, settings: {}, details: {}, features: A.defaultFeatures(), learn: false, nudge: false, floating: null };
@@ -81,15 +80,6 @@ const R = {
     },
     check: () => (Array.isArray(D.answers.q2) && D.answers.q2.length) ? "" : "Pick at least one."
   },
-  style: {
-    render() {
-      $("think").innerHTML = A.THINK.map(t => `<button type="button" class="card ${D.answers.q5 === t.value ? "on" : ""}" data-v="${esc(t.value)}" aria-pressed="${D.answers.q5 === t.value}"><b>${esc(t.label)}</b><small>${esc(t.hint)}</small></button>`).join("");
-      $("think").querySelectorAll(".card").forEach(b => b.onclick = () => { D.answers.q5 = b.dataset.v; R.style.render(); clearErr(); });
-      $("tone").innerHTML = TONES.map(t => `<button type="button" class="chip" aria-pressed="${D.answers.q6 === t}" data-t="${t}">${t}</button>`).join("");
-      $("tone").querySelectorAll(".chip").forEach(b => b.onclick = () => { D.answers.q6 = b.dataset.t; R.style.render(); clearErr(); });
-    },
-    check: () => !D.answers.q5 ? "Pick how you like answers." : !D.answers.q6 ? "Pick a tone." : ""
-  },
   focus: {
     render() {
       $("focus").innerHTML = A.FOCUS.map(f => `<button type="button" class="card ${D.answers.focus === f.id ? "on" : ""}" data-v="${f.id}" aria-pressed="${D.answers.focus === f.id}"><b>${esc(f.label)}</b><small>${esc(f.hint)}</small></button>`).join("");
@@ -150,9 +140,10 @@ const R = {
     }
   },
   key: {
-    render() {
-      $("provider").value = D.settings.provider || "none"; $("key").value = "";
+    async render() {
+      $("key").value = "";
       $("key").placeholder = D.settings.hasKey ? `A key is saved (${D.settings.keyHint || "hidden"}). Paste a new one to replace it.` : "Paste your key";
+      if (!$("provider").options.length) AI.fillSelect($("provider"), await AI.suggested(D.settings.provider));
       syncKey();
     },
     check: () => ""
@@ -208,18 +199,27 @@ async function addResume(f) {
 }
 
 /* ---------------- model key ---------------- */
-function syncKey() { const none = $("provider").value === "none"; $("key").disabled = none; $("testKey").hidden = none; }
+const AI = self.PepperAIConnect;
+const keyedAI = (p) => A.PROVIDERS.some(x => x.id === p && x.keyed);
+function syncKey() {
+  const p = $("provider").value;
+  $("keyField").hidden = !keyedAI(p); $("key").disabled = !keyedAI(p);
+  $("testKey").hidden = p === "none";
+  $("testKey").textContent = p === "chrome" ? "Turn it on" : "Save and test";
+  $("keyHelp").innerHTML = AI.helpHtml(p);
+  $("keyNote").textContent = "";
+  $("keyWhy").textContent = p === "chrome" ? "It runs on this computer, so what you type never leaves it. The first time, Chrome downloads the model."
+    : p === "none" ? "You can connect one any time in Pepper's settings."
+    : "When you ask Pepper to write, what you typed, your profile answers, active memories, your project's files and the end of the chat on screen go to that provider, and nowhere else. The key stays in this browser.";
+}
 $("provider").onchange = syncKey;
+const say = (cls, text) => { $("keyNote").className = "small " + cls; $("keyNote").textContent = text; };
 $("testKey").onclick = async () => {
   const provider = $("provider").value, apiKey = $("key").value.trim();
-  const note = $("keyNote");
-  if (!apiKey) { note.className = "small bad"; note.textContent = "Paste a key first."; return; }
-  await chrome.runtime.sendMessage({ type: "SET_KEY", provider, apiKey });
+  if (keyedAI(provider) && !apiKey && !(D.settings.hasKey && D.settings.provider === provider)) { say("bad", "Paste a key first."); return; }
+  await AI.connect(provider, apiKey, say);
   $("key").value = "";
-  note.className = "small"; note.textContent = "Testing…";
-  const r = await chrome.runtime.sendMessage({ type: "LLM", system: "Reply with the single word OK.", user: "ping", maxTokens: 16 });
-  if (r && r.ok) { note.className = "small ok"; note.textContent = `Connected to ${r.model}.`; }
-  else { note.className = "small bad"; note.textContent = "Saved, but your provider returned: " + ((r && r.error) || "no reply"); }
+  D.settings = (await chrome.storage.local.get("pepper_settings")).pepper_settings || D.settings;
 };
 
 /* ---------------- saving ---------------- */
@@ -229,9 +229,11 @@ async function saveProgress() {
 async function finish() {
   const settingsPatch = { onboarded: true, floating: D.floating, features: D.features };
   // Keys go to the worker's vault, never into settings.
-  if ($("provider").value === "none") await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" });
-  else if ($("key").value.trim()) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: $("provider").value, apiKey: $("key").value.trim() });
-  else if ($("provider").value !== (D.settings.provider || "none")) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: $("provider").value });
+  const pv = $("provider").value || "none", key = $("key").value.trim();
+  // Finish is a click, so Chrome's model download can start from here.
+  if (pv === "chrome") { self.PepperLocalAI.enable(); await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "chrome" }); }
+  else if (keyedAI(pv) && key) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: pv, apiKey: key });
+  else if (!(keyedAI(pv) && D.settings.hasKey && D.settings.provider === pv)) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" });
   await store({ op: "objPatch", key: "pepper_settings", patch: settingsPatch });
   if (D.features.autofill || Object.keys(D.details).length) await store({ op: "set", key: "pepper_details", value: D.details });
   // Learning consent changes only if the switch was changed here: turning it on covers your favorite sites,
@@ -257,7 +259,7 @@ async function finish() {
 function err(m) { $("err").textContent = m; }
 function clearErr() { $("err").textContent = ""; }
 const fmtTime = (hhmm) => { const t = A.parseTime(hhmm); if (!t) return hhmm; const d = new Date(); d.setHours(t.h, t.m, 0, 0); return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }); };
-const MOODS = { welcome: "wave", you: "", sites: "look", uses: "look", style: "", focus: "", float: "", powers: "joy", kit: "", key: "", done: "joy" };
+const MOODS = { welcome: "wave", you: "", sites: "look", uses: "look", focus: "", float: "", powers: "joy", kit: "", key: "", done: "joy" };
 
 function show(i) {
   step = Math.max(0, Math.min(STEPS.length - 1, i));
@@ -279,7 +281,7 @@ async function next() {
   if (name === "done") { window.close(); return; }
   const problem = R[name].check();
   if (problem) { err(problem); return; }
-  if (["you", "sites", "uses", "style", "focus"].includes(name)) await saveProgress();
+  if (["you", "sites", "uses", "focus"].includes(name)) await saveProgress();
   if (name === "key") {
     $("next").disabled = true;
     const why = await finish();

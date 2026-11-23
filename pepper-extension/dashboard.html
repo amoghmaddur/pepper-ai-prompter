@@ -161,13 +161,14 @@
         <div class="toolbar"><button class="btn corn" id="allOn">Turn on for all five</button><button class="btn" id="allOff">Turn off everywhere</button></div>
       </div>
 
-      <div class="block"><h2>Model</h2>
+      <div class="block"><h2>AI</h2>
         <form class="settings" id="settingsForm">
-          <label class="field"><span>Provider</span><select id="sProvider"><option value="none">None, use Pepper's built-in writer</option><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
-          <label class="field"><span>API key</span><span class="keyrow"><input type="password" id="sKey" autocomplete="off" spellcheck="false" placeholder="Paste your key"><button class="btn sm" type="button" id="showKey">Show</button></span>
+          <label class="field"><span>Which AI writes your prompts</span><select id="sProvider"></select><small id="providerHelp"></small></label>
+          <label class="field" id="sKeyField"><span>API key</span><span class="keyrow"><input type="password" id="sKey" autocomplete="off" spellcheck="false" placeholder="Paste your key"><button class="btn sm" type="button" id="showKey">Show</button></span>
             <small>Stored only in this browser and sent only to the provider above. Never exported.</small></label>
-          <label class="field"><span>Model</span><input type="text" id="sModel"><small id="modelHelp"></small></label>
-          <label class="field"><span>Show the typing dot after this many characters</span><input type="number" id="sMin" min="2" max="40"></label>
+          <label class="field" id="sModelField"><span>Model</span><input type="text" id="sModel"><small id="modelHelp"></small></label>
+          <label class="field"><span>Show the Improve button after this many characters</span><input type="number" id="sMin" min="2" max="40"></label>
+          <label class="check"><input type="checkbox" id="sImprove"> Show the Improve button on the chat box (Alt+Enter also improves)</label>
           <div class="toolbar"><button class="btn primary" type="submit">Save</button><button class="btn" type="button" id="testKey">Test connection</button><span class="saved" id="settingsSaved" aria-live="polite"></span></div>
           <p class="small" id="testNote" aria-live="polite"></p>
         </form>
@@ -188,6 +189,8 @@
 </div>
 <script src="lib/core.js"></script>
 <script src="lib/assist.js"></script>
+<script src="lib/local-ai.js"></script>
+<script src="lib/ai-connect.js"></script>
 <script src="dashboard.js"></script>
 </body>
 </html>

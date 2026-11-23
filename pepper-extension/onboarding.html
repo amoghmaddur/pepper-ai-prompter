@@ -48,13 +48,6 @@
     <div class="chips" id="uses"></div>
   </section>
 
-  <section class="step" data-step="style" hidden>
-    <h1>How do you like your answers?</h1>
-    <div class="cards two" id="think"></div>
-    <h2>And the tone?</h2>
-    <div class="chips" id="tone"></div>
-  </section>
-
   <section class="step" data-step="focus" hidden>
     <h1>When do you do your best work?</h1>
     <p class="lede">I can give you a gentle nudge when that time starts, with your goal and your AI one click away.</p>
@@ -97,15 +90,14 @@
   </section>
 
   <section class="step" data-step="key" hidden>
-    <h1>One last, optional thing</h1>
-    <p class="lede">I work fine on my own. With your own Anthropic or OpenAI key, your model writes the prompts and does full rewrites, and they read even better.</p>
+    <h1>Give me an AI to think with</h1>
+    <p class="lede">An AI is what turns your rough, vague prompts into clear ones. Chrome's own AI and Google Gemini are free. Without one, I ask the chat's AI to work out what you mean first.</p>
     <div class="keygrid">
-      <label class="field"><span>Provider</span>
-        <select id="provider"><option value="none">None, use Pepper's built-in writer</option><option value="anthropic">Anthropic</option><option value="openai">OpenAI</option></select></label>
-      <label class="field"><span>API key</span><input type="password" id="key" autocomplete="off" spellcheck="false" placeholder="Paste your key"></label>
+      <label class="field"><span>AI</span><select id="provider"></select></label>
+      <label class="field" id="keyField"><span>API key</span><input type="password" id="key" autocomplete="off" spellcheck="false" placeholder="Paste your key"><small id="keyHelp"></small></label>
     </div>
     <div class="row"><button class="btn" type="button" id="testKey">Save and test</button><span class="small" id="keyNote" aria-live="polite"></span></div>
-    <p class="why">With a key, what you ask, your profile answers, active memories and your project's file text go to that provider, and nowhere else. The key stays in this browser.</p>
+    <p class="why" id="keyWhy"></p>
   </section>
 
   <section class="step" data-step="done" hidden>
@@ -113,6 +105,7 @@
     <p class="lede" id="doneLede"></p>
     <div class="go" id="goSites"></div>
     <ul class="tips">
+      <li>In ChatGPT, Claude and the others, type as roughly as you like, then click <b>Improve</b> on the chat box or press <kbd>Alt</kbd>+<kbd>Enter</kbd>.</li>
       <li>Click the peppercorn, or press <kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd> on any page.</li>
       <li>Select text anywhere and click <b>Fix</b> or <b>Ask AI</b>.</li>
       <li>Drop any file on the peppercorn to keep it in your Pocket.</li>
@@ -128,6 +121,8 @@
 </main>
 <script src="lib/core.js"></script>
 <script src="lib/assist.js"></script>
+<script src="lib/local-ai.js"></script>
+<script src="lib/ai-connect.js"></script>
 <script src="onboarding.js"></script>
 </body>
 </html>

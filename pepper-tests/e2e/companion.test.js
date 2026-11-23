@@ -63,15 +63,15 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       await ob.screenshot({ path: path.join(SHOTS, "v04-onboarding-sites.png") });
       await ob.click("#next");
       await ob.click('#uses .chip[data-u="Job search"]'); await ob.click('#uses .chip[data-u="Writing"]'); await ob.click("#next");
-      await ob.click('#think .card[data-v="Step-by-step"]'); await ob.click("#next");
-      assert.match(await ob.textContent("#err"), /tone/, "tone is required too");
-      await ob.click('#tone .chip[data-t="Professional"]'); await ob.click("#next");
       await ob.click('#focus .card[data-v="morning"]'); await ob.check("#nudge"); await ob.click("#next");
       await ob.click('#float .card[data-v="ai"]'); await ob.click("#next");
       await ob.screenshot({ path: path.join(SHOTS, "v04-onboarding-powers.png") });
       await ob.check('#powers input[data-f="autofill"]'); await ob.check("#learn"); await ob.click("#next");
       await ob.fill('#details input[data-d="email"]', "maya@example.com"); await ob.click("#next");
-      await ob.click("#next"); // key step: Finish without a key
+      assert.equal(await ob.inputValue("#provider"), "gemini", "no built-in AI in this browser, so the free Gemini key is suggested");
+      assert.match(await ob.innerHTML("#keyHelp"), /aistudio\.google\.com\/apikey/);
+      await ob.screenshot({ path: path.join(SHOTS, "v05-onboarding-ai.png") });
+      await ob.click("#next"); // AI step: Finish without one
       await ob.locator('[data-step="done"]').waitFor({ state: "visible" });
       assert.equal(await ob.textContent("#doneTitle"), "You're all set, Maya!");
       assert.deepEqual(await ob.locator("#goSites a").allTextContents(), ["Open Claude", "Open ChatGPT"]);
@@ -79,7 +79,8 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       const s = await storage.all();
       assert.equal(s.pepper_profile.completed, true);
       assert.deepEqual(s.pepper_profile.answers.q1, ["Claude", "ChatGPT"]);
-      assert.equal(s.pepper_profile.answers.q5, "Step-by-step");
+      assert.ok(!("q5" in s.pepper_profile.answers) && !("q6" in s.pepper_profile.answers), "how Pepper should act isn't asked up front");
+      assert.equal(s.pepper_settings.provider, "none", "no key pasted, so no AI is saved");
       assert.equal(s.pepper_profile.answers.focus, "morning");
       assert.equal(s.pepper_settings.floating, "ai");
       assert.equal(s.pepper_settings.features.autofill, true);
@@ -92,12 +93,12 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       await ob.close();
     });
 
-    await t.test("After setup, Pepper starts the way Maya thinks: step by step → Clarify", async () => {
+    await t.test("After setup, Pepper opens on Write with a balanced approach and offers to connect an AI", async () => {
       const gpt = await ctx.newPage(); watch(gpt); await gpt.goto("https://chatgpt.com/"); await gpt.waitForTimeout(1000);
       await P(gpt, "#orb").click();
       assert.deepEqual(await P(gpt, ".tab:visible").allTextContents(), ["Write", "Fix", "Pocket", "Fill"]);
-      assert.equal(await P(gpt, '#lenses .lens[aria-checked="true"]').textContent(), "Clarify");
-      assert.match(await P(gpt, "#learnedNote").textContent(), /because you told Pepper “Walk me through it”/);
+      assert.equal(await P(gpt, '#lenses .lens[aria-checked="true"]').textContent(), "Balanced");
+      await until(async () => /No AI connected/.test(await P(gpt, "#setupNote").textContent()), 3000);
       await gpt.close();
     });
 
@@ -211,7 +212,8 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       assert.match(await P(page, "#filesUsed").textContent(), /page: Remote work notes/);
       const [cl] = await Promise.all([ctx.waitForEvent("page"), P(page, "#insert").click()]);
       await adopt(cl);
-      const txt = await until(async () => { const v = await boxText(cl, "div.ProseMirror"); return /SUCCESS CRITERIA/.test(v) ? v : null; });
+      const txt = await until(async () => { const v = await boxText(cl, "div.ProseMirror"); return /SOURCE FILES/.test(v) ? v : null; });
+      assert.match(txt, /^Summarize this for my manager/);
       assert.match(txt, /SOURCE FILES[\s\S]*<file name="page: Remote work notes">[\s\S]*URL: https:\/\/example\.org\//);
       assert.equal(await cl.evaluate(() => window.__sent.length), 0);
       await cl.close();

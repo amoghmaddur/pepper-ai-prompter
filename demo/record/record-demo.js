@@ -133,9 +133,6 @@ const PEP = `<svg class="orb" viewBox="0 0 48 48"><defs><radialGradient id="g" c
     await click(page, page.locator("#next"), 300);
     await click(page, page.locator('#uses .chip[data-u="Job search"]'), 120); await click(page, page.locator('#uses .chip[data-u="Writing"]'), 300);
     await click(page, page.locator("#next"), 300);
-    await caption(page, "01 · Setup", "How she likes answers shapes every prompt.", "“Walk me through it” starts prompts on Clarify.", "br");
-    await click(page, page.locator('#think .card[data-v="Step-by-step"]'), 150); await click(page, page.locator('#tone .chip[data-t="Professional"]'), 300);
-    await click(page, page.locator("#next"), 300);
     await click(page, page.locator('#focus .card[data-v="morning"]'), 150); await click(page, page.locator("#nudge"), 300);
     await click(page, page.locator("#next"), 300);
     await caption(page, "01 · Setup", "Keep floating everywhere, or only on AI sites.", "Everywhere asks the browser once.", "br");

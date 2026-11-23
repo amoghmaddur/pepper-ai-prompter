@@ -2,14 +2,15 @@
   "manifest_version": 3,
   "name": "Pepper — The Personal AI Prompter",
   "short_name": "Pepper",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "A floating helper that turns rough requests into clear prompts, fixes your writing, fills job forms and keeps your files handy. Your data stays in this browser.",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab", "contextMenus", "alarms"],
+  "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab", "contextMenus", "alarms", "offscreen"],
   "optional_permissions": ["notifications"],
   "host_permissions": [
     "https://api.anthropic.com/*",
-    "https://api.openai.com/*"
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*"
   ],
   "optional_host_permissions": ["<all_urls>"],
   "action": {
@@ -33,6 +34,10 @@
     "toggle-panel": {
       "suggested_key": { "default": "Alt+Shift+P" },
       "description": "Open or close Pepper on this page"
+    },
+    "improve-prompt": {
+      "suggested_key": { "default": "Alt+Shift+O" },
+      "description": "Improve the prompt you're typing, right in the chat box"
     }
   },
   "content_scripts": [

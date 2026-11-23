@@ -158,9 +158,9 @@ test("N8 the worker calls only the chosen provider host, with the key, and never
   assert.ok("max_completion_tokens" in JSON.parse(bg.fetchCalls[1].init.body));
 });
 
-test("M8 no key → NO_KEY without any network call; HTTP error surfaces the provider message", async () => {
+test("M8 no AI → NO_AI without any network call; HTTP error surfaces the provider message", async () => {
   const bg = await freshBg();
-  assert.equal((await bg.send({ type: "LLM", system: "s", user: "u" }, bg.fromExt)).error, "NO_KEY");
+  assert.equal((await bg.send({ type: "LLM", system: "s", user: "u" }, bg.fromExt)).error, "NO_AI");
   assert.equal(bg.fetchCalls.length, 0);
   await bg.send({ type: "SET_KEY", provider: "anthropic", apiKey: "k" }, bg.fromExt);
   bg.sandbox.__fetchImpl = async () => ({ ok: false, status: 429, json: async () => ({ error: { message: "rate limited" } }) });

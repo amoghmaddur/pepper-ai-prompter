@@ -1,6 +1,7 @@
 /* ==========================================================================
    Pepper — The Personal AI Prompter · background worker (v0.4)
-   - The only module with network access, limited to the two provider hosts.
+   - The only module with network access, limited to the three provider hosts,
+     plus Chrome's built-in on-device AI when there's no key.
    - The only module that reads the vault (API key, file contents).
    - Every list write from every tab goes through one serialized queue, so two
      tabs never overwrite each other; consent is re-checked before any record
@@ -8,7 +9,7 @@
    - Also: Pocket files, prompt hand-offs to AI sites, "keep floating"
      everywhere, focus reminders, the right-click menu and Alt+Shift+P.
    ========================================================================== */
-importScripts("lib/core.js", "lib/assist.js");
+importScripts("lib/core.js", "lib/assist.js", "lib/local-ai.js");
 const C = self.PepperCore;
 const A = self.PepperAssist;
 
@@ -61,16 +62,17 @@ const Vault = (() => {
 const keyHint = (k) => (k && k.length > 8 ? "…" + k.slice(-4) : "");
 /** A key belongs to one provider: switching provider without a new key drops it, so an Anthropic
     key is never sent to OpenAI (or the other way round). */
+const KEY_PROVIDERS = ["anthropic", "openai", "gemini"];
 async function setKey(provider, apiKey) {
-  const p = ["anthropic", "openai"].includes(provider) ? provider : "none";
+  const p = KEY_PROVIDERS.includes(provider) || provider === "chrome" ? provider : "none";
   const key = String(apiKey || "").trim();
-  if (key && p !== "none") {
+  if (key && KEY_PROVIDERS.includes(p)) {
     await Vault.set("apiKey", key);
     await Vault.set("keyProvider", p);
     return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p, hasKey: true, keyHint: keyHint(key) } }, false);
   }
   const owner = await Vault.get("keyProvider").catch(() => null);
-  if (p === "none" || (owner && owner !== p)) {
+  if (!KEY_PROVIDERS.includes(p) || (owner && owner !== p)) {
     await Vault.del("apiKey"); await Vault.del("keyProvider");
     return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p, hasKey: false, keyHint: "" } }, false);
   }
@@ -343,6 +345,7 @@ function openPage(page, hash) {
 
 chrome.commands.onCommand.addListener((command, tab) => {
   if (command === "toggle-panel") summon(tab, { type: "TOGGLE_PANEL" });
+  if (command === "improve-prompt") summon(tab, { type: "IMPROVE" });
 });
 
 /* ---------- right-click menu ---------- */
@@ -494,6 +497,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   switch (msg.type) {
     case "OPEN_PAGE": openPage(msg.page, msg.hash); sendResponse({ ok: true }); return;
     case "LLM": return reply(callLLM(msg.system, msg.user, msg.maxTokens || 3000));
+    case "AI_STATUS": return reply(aiStatus());
     case "STORE": return reply(storeOp(msg.op || {}, fromContent));
     case "POCKET_ADD_FILE": return reply(pocketAddFile(msg, fromContent));
     case "HANDOFF": return reply(handoff(msg, sender));
@@ -527,17 +531,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 });
 
-/* ---------- model call (exactly two hosts; key never logged or returned) ---------- */
+/* ---------- Chrome's built-in AI: in the worker if Chrome exposes it there, else in an offscreen page ---------- */
+let offscreenOpening = null;
+async function viaOffscreen(msg) {
+  if (!chrome.offscreen || !chrome.runtime.getContexts) return { ok: false, error: "NO_AI", status: "unavailable" };
+  try {
+    const open = (await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] })).length > 0;
+    if (!open) {
+      offscreenOpening = offscreenOpening || chrome.offscreen.createDocument({ url: "offscreen.html", reasons: ["WORKERS"],
+        justification: "Runs Chrome's built-in on-device AI to rewrite prompts." }).finally(() => { offscreenOpening = null; });
+      await offscreenOpening;
+    }
+    return (await chrome.runtime.sendMessage({ target: "offscreen", ...msg })) || { ok: false, error: "NO_AI" };
+  } catch (e) { return { ok: false, error: "NO_AI", status: "unavailable" }; }
+}
+const LocalAI = self.PepperLocalAI;
+const builtinStatus = async () => self.LanguageModel ? LocalAI.status() : ((await viaOffscreen({ type: "LOCAL_AI_STATUS" })).status || "unavailable");
+const callBuiltin = (system, user) => self.LanguageModel ? LocalAI.run(system, user) : viaOffscreen({ type: "LOCAL_AI", system, user });
+/** Which AI writes prompts right now: "key" (the user's provider), "builtin", or "none". */
+async function aiStatus() {
+  const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
+  const keyed = KEY_PROVIDERS.includes(pepper_settings.provider) && !!pepper_settings.hasKey;
+  const builtin = keyed ? "skipped" : await builtinStatus();
+  return { ok: true, provider: pepper_settings.provider || "none", engine: keyed ? "key" : builtin === "available" ? "builtin" : "none", builtin };
+}
+
+/* ---------- model call (exactly three hosts; key never logged or returned) ---------- */
 async function callLLM(system, user, maxTokens) {
   const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
   const provider = pepper_settings.provider;
-  const apiKey = provider && provider !== "none" ? await Vault.get("apiKey").catch(() => null) : null;
+  const keyed = KEY_PROVIDERS.includes(provider);
+  const apiKey = keyed ? await Vault.get("apiKey").catch(() => null) : null;
   const owner = apiKey ? await Vault.get("keyProvider").catch(() => null) : null;
-  // A key is only ever sent to the provider it was saved for.
-  if (!provider || provider === "none" || !apiKey || (owner && owner !== provider)) return { ok: false, error: "NO_KEY" };
-  const model = (pepper_settings.model || "").trim() || C.DEFAULT_MODELS[provider];
+  // A key is only ever sent to the provider it was saved for. Without one, Chrome's built-in AI
+  // writes the prompt when it's on this computer; otherwise the page falls back to asking the chat's AI.
+  if (!keyed || !apiKey || (owner && owner !== provider)) {
+    if (pepper_settings.builtin === false) return { ok: false, error: keyed ? "NO_KEY" : "NO_AI" };
+    const r = await callBuiltin(system, user);
+    return r.ok || r.error !== "NO_AI" ? r : { ok: false, error: keyed ? "NO_KEY" : "NO_AI" };
+  }
+  const model = (pepper_settings.model || "").trim().replace(/^models\//, "") || C.DEFAULT_MODELS[provider];
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 30000);
+  const timer = setTimeout(() => ctrl.abort(), 40000);
   try {
     let res, data;
     if (provider === "anthropic") {
@@ -562,9 +597,21 @@ async function callLLM(system, user, maxTokens) {
       if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
       return { ok: true, model, text: ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "").trim() };
     }
+    if (provider === "gemini") {
+      res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: "POST", signal: ctrl.signal,
+        headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }],
+          generationConfig: { maxOutputTokens: Math.max(maxTokens, 8192) } })
+      });
+      data = await res.json().catch(() => ({}));
+      if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
+      const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
+      return { ok: true, model, text: parts.filter(x => !x.thought).map(x => x.text || "").join("").trim() };
+    }
     return { ok: false, error: "Unknown provider" };
   } catch (e) {
-    return { ok: false, error: e.name === "AbortError" ? "The model took longer than 30 seconds." : "Couldn't reach the provider: " + (e.message || String(e)) };
+    return { ok: false, error: e.name === "AbortError" ? "The model took longer than 40 seconds." : "Couldn't reach the provider: " + (e.message || String(e)) };
   } finally {
     clearTimeout(timer);
   }

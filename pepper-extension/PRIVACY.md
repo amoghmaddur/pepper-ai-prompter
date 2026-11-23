@@ -6,7 +6,7 @@ Version 0.4.0. Last updated 2026-11-22.
 
 ## The short version
 
-Pepper keeps everything in your own browser. There is no Pepper server, no account, no analytics and no tracking. The only time anything leaves your browser is when you have added your own model key: then the text Pepper needs goes to the provider you chose (Anthropic or OpenAI), and nowhere else.
+Pepper keeps everything in your own browser. There is no Pepper server, no account, no analytics and no tracking. The only time anything leaves your browser is when you have added your own model key: then the text Pepper needs goes to the provider you chose (Google Gemini, Anthropic or OpenAI), and nowhere else. If you choose Chrome's built-in AI instead, it runs on your computer and nothing leaves it.
 
 Pepper saves the prompts you send, the replies and your ratings only on AI sites where you have turned learning on. Learning is off until you turn it on.
 
@@ -48,9 +48,9 @@ History older than 90 days is deleted automatically, and Pepper keeps at most 2,
 
 ## What is sent to your model provider
 
-Only if you have added an API key. Pepper sends these to the one provider you chose (`api.anthropic.com` or `api.openai.com`), using your key:
+Only if you have added an API key. Pepper sends these to the one provider you chose (`generativelanguage.googleapis.com`, `api.anthropic.com` or `api.openai.com`), using your key. With Chrome's built-in AI the same text stays on your computer:
 
-1. **When you click "Write my prompt":** what you typed into Pepper; your profile answers; your active memories; the active project's name, type and description; the text of that project's attached files (up to 2,500 characters per file and 6,000 in total); if you ticked "Use this page", the page's address and up to 2,500 characters of its text; the approach; a target length; any assumptions you added.
+1. **When you click Improve (on the chat box or in the panel) or press Alt+Enter:** what you typed; on an AI site, the last 2,400 characters of the conversation on screen, so follow-ups make sense; your profile answers; your active memories; the active project's name, type and description; the text of that project's attached files (up to 2,500 characters per file and 6,000 in total); if you ticked "Use this page", the page's address and up to 2,500 characters of its text; the approach; a length limit.
 2. **When you click Shorter, Longer, More formal or More casual:** the current prompt.
 3. **When you use Fix, Improve, Shorter, More formal, Similar ideas or Explain:** the text you chose, and your role, tone, audience and things to avoid.
 4. **When you click "Suggest memories":** up to 30 of your recorded prompts, each cut to 800 characters.
@@ -107,7 +107,8 @@ Under **History → What Pepper learned** you can see what Pepper concluded and 
 - **Alarms:** to schedule your reminders.
 - **Notifications (asked only when you turn on reminders).**
 - **Access to all sites (asked only when you choose "Keep floating everywhere").**
-- **api.anthropic.com and api.openai.com:** to reach your model provider when you add a key.
+- **Offscreen document:** to run Chrome's built-in AI when you choose it.
+- **generativelanguage.googleapis.com, api.anthropic.com and api.openai.com:** to reach your model provider when you add a key.
 
 ## Uninstalling
 

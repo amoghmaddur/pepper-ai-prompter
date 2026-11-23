@@ -31,6 +31,9 @@ async function load() {
 const answers = () => D.profile.answers || {};
 // The key itself is in the worker's vault; pages only know whether one is saved, and its last four characters.
 const hasKey = () => D.settings.provider !== "none" && !!D.settings.hasKey;
+const aiOn = () => hasKey() || D.settings.provider === "chrome";
+const AI = self.PepperAIConnect;
+const keyedAI = (p) => A.PROVIDERS.some(x => x.id === p && x.keyed);
 const consentCount = () => C.SITES.filter(s => D.consent[s.id] && D.consent[s.id].learning).length;
 const files = () => D.pocket.filter(i => i.kind === "file");
 const setFeature = (id, on) => store({ op: "objPatch", key: "pepper_settings", patch: { features: { ...D.features, [id]: on } } });
@@ -83,7 +86,7 @@ function renderHome() {
     { done: !!resume, title: "Put your resume in your Pocket", desc: "Drag it onto job sites from the floating Pepper, or let Pepper attach it.", href: "#pocket", cta: "Add resume" },
     D.features.autofill ? { done: detailsN >= 4, title: "Add the details you type on every application", desc: `${detailsN} saved. Pepper fills them in when you click Fill.`, href: "#pocket", cta: "Add details", hash: "details" } : null,
     { done: consentCount() > 0, title: "Let Pepper learn what works for you", desc: consentCount() ? `On for ${consentCount()} of 5 sites.` : "Off everywhere, so Pepper can't learn which approach you like.", href: "#settings", cta: "Choose sites" },
-    { done: hasKey(), title: "Add your model key", desc: "Optional. Your own model writes fuller prompts and does full rewrites in the Fix tab.", href: "#settings", cta: "Add key" },
+    { done: aiOn(), title: "Connect an AI", desc: "Chrome's built-in AI or a free Gemini key turns your rough prompts into clear ones, right in the chat box.", href: "#settings", cta: "Connect" },
     { done: D.features.reminders && D.reminders.some(r => r.enabled), title: "Get a nudge at your focus time", desc: "A notification when your best hours start.", href: "#reminders", cta: "Set it up" },
     { done: D.history.some(h => h.assisted) || D.saved.length > 0, title: `Write your first prompt on ${fav[0].name}`, desc: "Click the peppercorn in the corner, or press Alt+Shift+P.", href: null }
   ].filter(Boolean);
@@ -196,7 +199,7 @@ function renderMemories() {
     row.querySelector("[data-del]").onclick = () => store({ op: "listRemove", key: "pepper_memories", id });
   });
   $("factsBtn").disabled = !hasKey() || !D.history.length;
-  $("factsNote").textContent = !hasKey() ? "Needs a model key (Settings)." : !D.history.length ? "Needs prompts in your history first." : "";
+  $("factsNote").textContent = !aiOn() ? "Needs an AI (Settings)." : !D.history.length ? "Needs prompts in your history first." : "";
 }
 $("memForm").onsubmit = async (e) => {
   e.preventDefault();
@@ -597,14 +600,15 @@ function renderSettings() {
       <label class="switch corn"><input type="checkbox" data-site="${s.id}" ${on ? "checked" : ""} aria-label="Learning on ${esc(s.name)}"><i></i></label></div>`;
   }).join("");
   $("consentRows").querySelectorAll("input[data-site]").forEach(i => i.onchange = () => setConsent({ [i.dataset.site]: { learning: i.checked } }));
-  $("sProvider").value = D.settings.provider || "none";
+  AI.fillSelect($("sProvider"), D.settings.provider || "none");
+  $("sImprove").checked = D.settings.improveButton !== false;
   $("sKey").value = "";
   $("sKey").placeholder = hasKey() ? `A key is saved (${D.settings.keyHint || "hidden"}). Paste a new one to replace it.` : "Paste your key";
   $("sModel").value = D.settings.model || "";
   $("sMin").value = D.settings.minChars || 6;
   syncModelHelp();
   $("histCount2").textContent = `${D.history.length} prompts recorded. Your ratings and what Pepper learned from them go too.`;
-  $("keyState").textContent = hasKey() ? `A ${D.settings.provider === "anthropic" ? "Anthropic" : "OpenAI"} key is stored in this browser.` : "No key stored.";
+  $("keyState").textContent = hasKey() ? `A ${({ anthropic: "Anthropic", openai: "OpenAI", gemini: "Google Gemini" })[D.settings.provider] || ""} key is stored in this browser.` : "No key stored.";
   $("removeKey").disabled = !D.settings.hasKey;
 }
 document.querySelectorAll('#floatChoice input').forEach(r => r.onchange = async () => {
@@ -623,9 +627,13 @@ function syncModelHelp() {
   const p = $("sProvider").value;
   const def = C.DEFAULT_MODELS[p];
   $("sModel").placeholder = def || "";
-  $("sModel").disabled = $("sKey").disabled = p === "none";
+  $("sModel").disabled = $("sKey").disabled = !keyedAI(p);
+  $("sKeyField").hidden = $("sModelField").hidden = !keyedAI(p);
   $("testKey").disabled = p === "none";
-  $("modelHelp").textContent = def ? `Leave blank to use ${def}. Check your provider's model list if it fails.` : "Not needed for the built-in writer.";
+  $("testKey").textContent = p === "chrome" ? "Turn it on" : "Test connection";
+  $("modelHelp").textContent = def ? `Leave blank to use ${def}. Check your provider's model list if it fails.` : "";
+  $("providerHelp").innerHTML = p === "chrome" ? "Runs on this computer, so nothing you type leaves it. Needs a recent Chrome on a capable computer."
+    : p === "none" ? "Without an AI, Pepper asks the chat's own AI to work out what you mean before it answers." : AI.helpHtml(p);
 }
 $("sProvider").onchange = syncModelHelp;
 $("showKey").onclick = () => { const k = $("sKey"); k.type = k.type === "password" ? "text" : "password"; $("showKey").textContent = k.type === "password" ? "Show" : "Hide"; };
@@ -633,19 +641,16 @@ $("shortcuts").onclick = () => chrome.tabs.create({ url: navigator.userAgent.inc
 async function saveSettings() {
   const provider = $("sProvider").value, key = $("sKey").value.trim();
   // Keys go to the worker's vault, never into storage that web pages' scripts could read.
-  if (provider === "none") await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" });
-  else if (key) await chrome.runtime.sendMessage({ type: "SET_KEY", provider, apiKey: key });
+  if (key && keyedAI(provider)) await chrome.runtime.sendMessage({ type: "SET_KEY", provider, apiKey: key });
   else await chrome.runtime.sendMessage({ type: "SET_KEY", provider }); // a different provider drops the old key
-  await store({ op: "objPatch", key: "pepper_settings", patch: { model: $("sModel").value.trim(), minChars: Math.max(2, Math.min(40, +$("sMin").value || 6)) } });
+  await store({ op: "objPatch", key: "pepper_settings", patch: { model: $("sModel").value.trim(), minChars: Math.max(2, Math.min(40, +$("sMin").value || 6)), improveButton: $("sImprove").checked } });
   $("sKey").value = "";
 }
 $("settingsForm").onsubmit = async (e) => { e.preventDefault(); await saveSettings(); flashSaved("settingsSaved"); };
 $("testKey").onclick = async () => {
-  await saveSettings();
-  $("testNote").className = "small"; $("testNote").textContent = "Testing…";
-  const r = await chrome.runtime.sendMessage({ type: "LLM", system: "Reply with the single word OK.", user: "ping", maxTokens: 16 });
-  if (r && r.ok) { $("testNote").className = "small ok"; $("testNote").textContent = `Connected to ${r.model}. Settings saved.`; }
-  else { $("testNote").className = "small bad"; $("testNote").textContent = r && r.error === "NO_KEY" ? "Add a key first." : "Your provider returned: " + ((r && r.error) || "no reply"); }
+  const provider = $("sProvider").value;
+  if (provider !== "chrome") await saveSettings();
+  await AI.connect(provider, "", (cls, text) => { $("testNote").className = "small " + cls; $("testNote").textContent = text; });
 };
 $("export").onclick = async () => {
   const s = await chrome.storage.local.get(null);

@@ -35,7 +35,10 @@
   const redactKey = (st) => { const c = { ...(st || {}) }; delete c.apiKey; return c; };
   const store = (op) => chrome.runtime.sendMessage({ type: "STORE", op }).catch(e => ({ ok: false, error: String(e) }));
   const send = (msg) => chrome.runtime.sendMessage(msg).catch(e => ({ ok: false, error: String(e && e.message || e) }));
-  const hasKey = () => S.settings.provider && S.settings.provider !== "none" && !!S.settings.hasKey;
+  // Which AI writes prompts: "key" (the user's provider), "builtin" (Chrome's on-device AI) or "none".
+  let aiState = null;
+  const aiOn = () => !aiState || aiState.engine !== "none";
+  async function refreshAI() { const r = await send({ type: "AI_STATUS" }); aiState = r && r.ok ? r : null; renderSetup(); }
   const learningOn = () => !!SITE && C.consentAllows(S.settings, S.consent, HOST);
   const ready = () => A.setupComplete(S.profile, S.settings);
   const feature = (id) => ({ ...A.defaultFeatures(), ...(S.settings.features || {}) })[id];
@@ -196,7 +199,17 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 .check{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink);margin-top:10px}
 .check input{accent-color:var(--pepper)}
 .busy .primary{position:relative;color:transparent}
-.busy .primary::after{content:"Writing your prompt…";position:absolute;color:var(--pepper-ink);font-weight:600}
+.busy .primary::after{content:"Improving your prompt…";position:absolute;color:var(--pepper-ink);font-weight:600}
+/* The Improve chip sits on the AI site's chat box: one click rewrites what you typed, in place. */
+.imp{position:absolute;display:none;align-items:center;gap:5px;height:30px;padding:0 11px 0 4px;border-radius:999px;border:1px solid var(--line);
+  background:var(--surface);color:var(--ink);box-shadow:var(--shadow);font:700 12.5px/1 var(--sans);cursor:pointer;z-index:3;pointer-events:auto;white-space:nowrap}
+.imp.show{display:inline-flex;animation:pop .14s ease-out}
+.imp .pep{width:24px;height:24px;animation:none}
+.imp:hover{border-color:var(--pepper)}
+.imp[data-mode="busy"]{cursor:progress;color:var(--muted)}
+.imp[data-mode="busy"] .pep{animation:think 1s ease-in-out infinite}
+.imp[data-mode="done"]{color:var(--pepper)}
+@keyframes think{50%{transform:rotate(-10deg) scale(.92)}}
 
 /* result */
 .rhead{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
@@ -334,6 +347,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 
   root.innerHTML = `
 <div class="wrap" id="wrap" hidden>
+  <button class="imp" id="imp" data-mode="idle" title="Improve this prompt (Alt+Enter)">${PEPPER_SVG("i")}<span id="impText">Improve</span></button>
   <div class="pill" id="pill" role="toolbar" aria-label="Pepper for your selection">${PEPPER_SVG("p")}<button id="pillFix">Fix</button><button id="pillAsk">Ask AI</button><button id="pillSave" title="Save to your Pocket">Save</button></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
   <div class="hint" id="hint" role="status" aria-live="polite"><button class="icon x" id="hintX" aria-label="Dismiss">${I.close}</button><p id="hintText"></p><div class="row2" id="hintBtns"></div></div>
@@ -382,7 +396,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
             <div class="lenses" id="lenses" role="radiogroup" aria-labelledby="lensCap"></div>
           </div>
           <p class="learned" id="learnedNote"></p>
-          <button class="primary" id="go">Write my prompt <kbd id="kbd">Ctrl ↵</kbd></button>
+          <button class="primary" id="go">Improve my prompt <kbd id="kbd">Ctrl ↵</kbd></button>
           <p class="note" id="setupNote"></p>
         </div>
         <div id="result" hidden>
@@ -630,6 +644,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     renderFooter();
     panel.classList.add("show");
     wrap.classList.add("awake");
+    imp.classList.remove("show");
     fitPanel();
     orb.classList.remove("typed", "alert");
     setTimeout(() => {
@@ -639,7 +654,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
       else if (tab === "pocket") $("pq").focus();
     }, 0);
   }
-  function closePanel() { panel.classList.remove("show"); wrap.classList.remove("awake"); placeHost(placed); refreshVisibility(); }
+  function closePanel() { panel.classList.remove("show"); wrap.classList.remove("awake"); placeHost(placed); refreshVisibility(); updateChip(); }
   $("close").onclick = () => { closePanel(); orb.focus(); };
   $("dash").onclick = () => send({ type: "OPEN_PAGE", page: "dashboard.html" });
   $("back").onclick = () => showCompose();
@@ -656,10 +671,12 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     root.querySelectorAll("[data-view]").forEach(v => v.hidden = v.dataset.view !== t);
     $("proj").hidden = t !== "prompt";
     if (t === "prompt") {
-      renderProjects(); pickLearnedLens(); renderLenses(); renderSugs(); renderSetup(); renderPageOption();
+      renderProjects(); pickLearnedLens(); renderLenses(); renderSugs(); renderSetup(); renderPageOption(); refreshAI();
       const raw = $("raw");
+      const typed = SITE ? getInputText().trim() : "";
       if (o && o.text) { raw.value = o.text; showCompose(); }
-      else if (!raw.value.trim() && SITE) raw.value = getInputText().trim();
+      else if (typed && C.collapse(typed) !== C.collapse(improvedText) && (!out || C.collapse(typed) !== C.collapse(out.raw))) { raw.value = typed; showCompose(); }
+      else if (!raw.value.trim() && typed) raw.value = typed;
     }
     if (t === "fix") renderFix(o);
     if (t === "pocket") renderPocket();
@@ -755,22 +772,25 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   }
   function renderSugs() {
     const ctx = ctxNow();
-    const list = C.suggestions({ ...S, files: files() }, ctx);
+    const list = C.suggestions({ ...S, files: files() }, ctx, SITE ? null : { kind: "page", selectionWords: words(source.text) });
     $("sugCap").hidden = !list.length;
     $("sugs").innerHTML = list.map((s, i) =>
       `<button class="sug ${s.kind}" data-i="${i}" title="${esc(s.text)}"><span class="k">${esc(s.label)}</span><span class="t">${esc(s.title || s.text)}</span></button>`).join("");
     $("sugs").querySelectorAll(".sug").forEach(b => b.onclick = () => {
       const s = list[+b.dataset.i];
       if (s.kind === "saved") { showResult({ engine: "saved", prompt: s.text, assumptions: [], status: "ok", raw: s.title || "", lens: currentLens, lensSource, ctx }); return; }
-      $("raw").value = s.text; $("raw").focus();
-      const i = s.text.indexOf("["); if (i >= 0) $("raw").setSelectionRange(i, s.text.indexOf("]", i) + 1 || s.text.length);
+      if (s.usePage && !SITE) $("usePage").checked = true;
+      if (s.paste) { const raw = $("raw"); raw.value = s.text + "\n"; raw.focus(); raw.setSelectionRange(raw.value.length, raw.value.length); return; }
+      $("raw").value = s.text;
+      runExpand();
     });
   }
+  const connectAI = () => send({ type: "OPEN_PAGE", page: "dashboard.html", hash: "settings" });
   function renderSetup() {
     const n = $("setupNote");
-    n.innerHTML = hasKey() ? "" : `Using Pepper's built-in template. <button id="addKey">Add your model key</button> for a fuller rewrite.`;
+    n.innerHTML = aiOn() ? "" : `No AI connected, so ${esc(SITE ? SITE.name : "your AI")} will work out what you mean before answering. <button id="addKey">Connect a free AI</button> to see the better prompt first.`;
     const b = root.getElementById("addKey");
-    if (b) b.onclick = () => send({ type: "OPEN_PAGE", page: "dashboard.html", hash: "settings" });
+    if (b) b.onclick = connectAI;
   }
   function renderPageOption() {
     $("usePageRow").hidden = !!SITE;
@@ -794,24 +814,40 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   function llm(system, user, maxTokens) {
     return Promise.race([
       chrome.runtime.sendMessage({ type: "LLM", system, user, maxTokens: maxTokens || 3000 }),
-      new Promise(r => setTimeout(() => r({ ok: false, error: "The model took longer than 30 seconds." }), 31000))
+      new Promise(r => setTimeout(() => r({ ok: false, error: "The model took longer than 45 seconds." }), 45000))
     ]).catch(e => ({ ok: false, error: String(e.message || e) }));
   }
+  const noAI = (r) => !r || r.error === "NO_KEY" || r.error === "NO_AI";
 
+  /** The end of the chat on screen, so a follow-up like "make it shorter" can be understood. */
+  function recentConversation() {
+    if (!SITE) return "";
+    const box = (inputEl && inputEl.isConnected && inputEl.closest("main")) || document.querySelector("main") || document.body;
+    let text = box ? box.innerText || "" : "";
+    const typed = getInputText().trim();
+    if (typed) text = text.split(typed).join(" ");
+    text = text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    return text.length < 160 ? "" : text.slice(-2400);
+  }
+  /** Rewrites a rough prompt with the user's AI. With none connected, Pepper writes a prompt that asks the chat's AI to work out the intent first. */
+  async function rewrite(raw, ctx, lens) {
+    const conversation = recentConversation();
+    const opts = { site: SITE ? SITE.name : ((A.AI_SITES.find(x => x.id === $("sendTo").value) || fav()).name), inChat: !!conversation, conversation };
+    const r = await llm(C.buildSystemPrompt(ctx, lens, opts), C.buildUserMessage(raw, ctx, opts));
+    if (r && r.ok && r.text) {
+      const p = C.parseReply(r.text);
+      if (p.prompt) return { engine: "llm", model: r.model, ...p };
+    }
+    if (noAI(r) && aiState) aiState.engine = "none";
+    return { engine: "offline", noAI: noAI(r), error: noAI(r) ? null : ((r && r.error) || "No reply"), prompt: C.offlinePrompt(raw, ctx, opts), assumptions: [], status: "ok" };
+  }
   async function runExpand() {
     const raw = $("raw").value.trim();
     if (raw.length < 2) { $("raw").focus(); return; }
     const ctx = ctxWithPage();
     const lens = currentLens;
     setBusy(true); mood("think");
-    let res;
-    if (hasKey()) {
-      const r = await llm(C.buildSystemPrompt(ctx, lens), C.buildUserMessage(raw, ctx));
-      if (r && r.ok && r.text) res = { engine: "llm", model: r.model, ...C.parseReply(r.text) };
-      else res = { engine: "template", error: (r && r.error) || "No reply", prompt: C.template(raw, ctx, lens), assumptions: [], status: "ok" };
-    } else {
-      res = { engine: "template", noKey: true, prompt: C.template(raw, ctx, lens), assumptions: [], status: "ok" };
-    }
+    const res = await rewrite(raw, ctx, lens);
     setBusy(false); mood(null);
     showResult({ ...res, raw, lens, lensSource, ctx, overrides: {} });
   }
@@ -834,20 +870,17 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 
   function renderResult() {
     const o = out;
-    const target = C.lengthTarget(o.ctx || ctxNow(), o.lens);
     $("wc").textContent = words(o.prompt) + " words";
-    $("target").textContent = o.engine === "llm" ? `aim ${target.min}–${target.max}` : "";
+    $("target").textContent = "";
     const w = [];
-    if (o.status === "malformed") w.push("The model's reply didn't follow the expected layout, so it's shown in full. Edit it before inserting.");
-    if (o.engine === "llm" && o.status === "missing") w.push("The model did not list assumptions — review before inserting.");
-    const miss = C.missingSections(o.prompt);
-    if (miss.length && o.status !== "malformed") w.push("Missing: " + miss.map(titleCase).join(", ") + ".");
+    if (o.status === "malformed") w.push("The AI's reply didn't follow the expected layout, so it's shown in full. Check it before inserting.");
     $("warn").textContent = w.join(" ");
     $("warn").classList.toggle("show", w.length > 0);
     $("prompt").hidden = o.editing; $("editor").hidden = !o.editing;
     if (o.editing) { if ($("editor").value !== o.prompt) $("editor").value = o.prompt; }
     else {
-      $("prompt").innerHTML = C.splitSections(o.prompt).map(s => {
+      const parts = C.splitSections(o.prompt);
+      $("prompt").innerHTML = parts.length === 1 && !parts[0].label ? `<div class="sec pre"><div class="sec-b">${esc(o.prompt)}</div></div>` : parts.map(s => {
         // A beginner's "Purpose:" line is part of the prompt, but shown as a note so it doesn't read as an instruction.
         const m = s.body.match(/^Purpose: ([^\n]*)\n?/);
         const body = m ? s.body.slice(m[0].length) : s.body;
@@ -859,12 +892,14 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     $("files").classList.toggle("show", used.length > 0);
     $("filesUsed").textContent = used.length ? "Using " + used.map(f => f.name + (f.truncated ? " (trimmed)" : "")).join(", ") : "";
     renderAssumptions();
-    const model = o.model ? ` (${o.model})` : "";
-    $("engine").textContent =
-      o.engine === "llm" ? `Expanded with your model${model}.` :
+    root.querySelectorAll("#tools button[data-t]").forEach(b => b.hidden = o.engine !== "llm");
+    const target = esc(SITE ? SITE.name : (A.AI_SITES.find(x => x.id === $("sendTo").value) || fav()).name);
+    $("engine").innerHTML =
+      o.engine === "llm" ? `Improved by ${esc(o.model || "your AI")}.` :
       o.engine === "saved" ? "From your saved prompts." :
-      o.error ? `Your model returned: ${o.error} Used the local template instead.` :
-      o.noKey ? "No API key — used the local template." : "Built with the local template.";
+      o.error ? `Your AI didn't answer (${esc(o.error)}), so this asks ${target} to work out what you mean first.` :
+      `No AI connected, so this asks ${target} to work out what you mean first. <button class="link" id="connectAI">Connect a free AI</button> to see a full rewrite here.`;
+    const ca = root.getElementById("connectAI"); if (ca) ca.onclick = connectAI;
     // On an AI site the prompt goes in this box; anywhere else it goes to the user's AI.
     $("sendRow").hidden = !!SITE;
     if (!SITE) {
@@ -924,32 +959,16 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     if (!out) return;
     if (out.editing) { out.prompt = $("editor").value; out.editing = false; }
     setBusy(true);
-    if (out.engine === "llm" && hasKey()) {
-      const r = await llm(C.buildTransformSystem(), C.transformInstruction(kind) + "\n\nPROMPT:\n" + out.prompt);
-      setBusy(false);
-      if (r && r.ok && r.text) {
-        const p = C.parseReply(r.text);
-        const kept = out.assumptions.filter(a => a.state === "open").map(a => a.text);
-        showResult({ ...out, ...p, assumptions: [...new Set([...kept, ...p.assumptions])], engine: "llm", model: r.model });
-        return;
-      }
-      toast("Your model returned: " + ((r && r.error) || "no reply") + " The prompt is unchanged.");
-      renderResult();
+    const r = await llm(C.buildTransformSystem(), C.transformInstruction(kind) + "\n\nPROMPT:\n" + out.prompt);
+    setBusy(false);
+    if (r && r.ok && r.text) {
+      const p = C.parseReply(r.text);
+      const kept = out.assumptions.filter(a => a.state === "open").map(a => a.text);
+      showResult({ ...out, ...p, assumptions: [...new Set([...kept, ...p.assumptions])], engine: "llm", model: r.model });
       return;
     }
-    // Template engine: rebuild from the request with the new setting.
-    const ov = { ...(out.overrides || {}) };
-    const order = ["light", "moderate", "heavy"];
-    const cur = order.indexOf(ov.tier || out.ctx.tier.id);
-    if (kind === "shorten") ov.tier = order[Math.max(0, cur - 1)];
-    if (kind === "expand") ov.tier = order[Math.min(2, cur + 1)];
-    if (kind === "pro") ov.tone = "Professional";
-    if (kind === "casual") ov.tone = "Casual";
-    const hadEdits = out.edited;
-    setBusy(false);
-    if (!out.raw) { toast("Saved prompts can't be rebuilt. Use Edit to change it."); return; }
-    showResult({ ...out, prompt: C.template(out.raw, out.ctx, out.lens, ov), overrides: ov, assumptions: [], status: "ok" });
-    if (hadEdits) toast("Rebuilt from your request, so your manual edits were replaced.");
+    toast(noAI(r) ? "Connect an AI in Pepper's settings to reshape prompts." : "Your AI returned: " + ((r && r.error) || "no reply") + " The prompt is unchanged.");
+    renderResult();
   }
 
   /* ---------------- input bridge: the AI site's prompt box ---------------- */
@@ -1050,7 +1069,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     $("fixSrc").textContent = where;
     $("fixGrab").hidden = !selectionInfo().text;
     $("fixOut").hidden = !fixResult;
-    $("fixNote").textContent = hasKey() ? "Your model does the work; the text is sent only to your provider." : "Fix works offline. The others go to your AI with a ready-made prompt, or add a model key to get them right here.";
+    $("fixNote").textContent = aiOn() ? "Your AI does the work." : "Fix works offline. The others go to your AI with a ready-made prompt, or connect a free AI in settings to get them right here.";
     root.querySelectorAll("#fixKinds .kind").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.k === fixKind)));
   }
   $("fixGrab").onclick = () => { captureSource(); fixResult = null; renderFix(); };
@@ -1065,19 +1084,16 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     const h = A.HELPERS[kind];
     $("fixTitle").textContent = h.label;
     $("fixChanges").textContent = ""; $("fixMeta").textContent = "";
-    if (hasKey()) {
-      mood("think"); $("fixText").textContent = "Thinking…"; $("fixOut").hidden = false;
-      const r = await llm(A.helperSystem(kind, ctx), A.helperUser(text), 1500);
-      mood(null);
-      if (r && r.ok && r.text) fixResult = { kind, text: r.text, replaceable: kind !== "similar" && kind !== "explain" };
-      else if (kind === "fix") { const t = A.tidyText(text); fixResult = { kind, text: t.text, changes: t.changes, replaceable: true, offline: true }; toast("Your model didn't answer, so Pepper did a quick offline fix."); }
-      else fixResult = { kind, prompt: A.helperPrompt(kind, text, ctx, { title: document.title, url: location.href }), error: (r && r.error) || "No reply" };
-    } else if (kind === "fix") {
+    mood("think"); $("fixText").textContent = "Thinking…"; $("fixOut").hidden = false;
+    const r = await llm(A.helperSystem(kind, ctx), A.helperUser(text), 1500);
+    mood(null);
+    const none = noAI(r);
+    if (r && r.ok && r.text) fixResult = { kind, text: r.text, replaceable: kind !== "similar" && kind !== "explain" };
+    else if (kind === "fix") {
       const t = A.tidyText(text);
-      fixResult = { kind, text: t.text, changes: t.changes, replaceable: true, offline: true };
-    } else {
-      fixResult = { kind, prompt: A.helperPrompt(kind, text, ctx, SITE ? null : { title: document.title, url: location.href }) };
-    }
+      fixResult = { kind, text: t.text, changes: t.changes, replaceable: true, offline: true, noAI: none };
+      if (!none) toast("Your AI didn't answer, so Pepper did a quick offline fix.");
+    } else fixResult = { kind, prompt: A.helperPrompt(kind, text, ctx, SITE ? null : { title: document.title, url: location.href }), error: none ? null : (r && r.error) || "No reply" };
     renderFixResult();
   }
   function renderFixResult() {
@@ -1086,7 +1102,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     if (!r) return;
     const f = fav();
     if (r.prompt) {
-      $("fixMeta").textContent = r.error ? "Your model didn't answer" : "Needs an AI";
+      $("fixMeta").textContent = r.error ? "Your AI didn't answer" : "Needs an AI";
       $("fixText").textContent = r.prompt;
       $("fixChanges").textContent = `Pepper wrote this prompt for ${f.name}. Send it there, or copy it.`;
       $("fixReplace").hidden = true;
@@ -1109,9 +1125,9 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
       if (wordsFixed.length) parts.push(wordsFixed.join(" · "));
       if (other.length) parts.push("Fixed " + other.join(" and ") + ".");
       if (!n) parts.push("No spelling or spacing problems found.");
-      if (!hasKey()) parts.push("For full grammar, add a model key.");
+      if (r.noAI) parts.push("For full grammar, connect an AI in settings.");
       $("fixChanges").innerHTML = parts.join(wordsFixed.length ? ". " : " ").replace(/\.\. /g, ". ");
-    } else $("fixMeta").textContent = "From your model";
+    } else $("fixMeta").textContent = "From your AI";
   }
   $("fixCopy").onclick = async () => {
     if (!fixResult) return;
@@ -1589,6 +1605,78 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   function onType() {
     const n = getInputText().trim().length;
     orb.classList.toggle("typed", n >= (S.settings.minChars || 6) && !panel.classList.contains("show"));
+    if (chipMode === "done" && C.collapse(getInputText()) !== C.collapse(improvedText)) { undoState = null; chipState("idle"); }
+    else updateChip();
+  }
+
+  /* ---------------- Improve in place: type, click once (or Alt+Enter), send ---------------- */
+  const imp = $("imp");
+  let chipMode = "idle", chipTimer = null, improvedText = "", undoState = null, improving = false, chipRaf = 0;
+  function chipState(m) {
+    chipMode = m; clearTimeout(chipTimer);
+    if (m === "done") chipTimer = setTimeout(() => { undoState = null; chipState("idle"); }, 12000);
+    updateChip();
+  }
+  function updateChip() {
+    cancelAnimationFrame(chipRaf);
+    chipRaf = requestAnimationFrame(() => {
+      const el = SITE && inputEl && inputEl.isConnected && visible(inputEl) ? inputEl : null;
+      const text = el ? getInputText().trim() : "";
+      const want = !!el && ready() && S.settings.enabled !== false && S.settings.improveButton !== false && !wrap.hidden && !document.fullscreenElement
+        && !panel.classList.contains("show")
+        && (chipMode !== "idle" || (text.length >= (S.settings.minChars || 6) && C.collapse(text) !== C.collapse(improvedText)));
+      if (!want) { imp.classList.remove("show"); return; }
+      imp.dataset.mode = chipMode;
+      $("impText").textContent = chipMode === "busy" ? "Improving…" : chipMode === "done" ? "Undo" : "Improve";
+      imp.title = chipMode === "done" ? "Put back what you wrote" : chipMode === "busy" ? "Pepper is rewriting your prompt" : "Improve this prompt (Alt+Enter)";
+      imp.classList.add("show");
+      const r = el.getBoundingClientRect(), host = hostEl.getBoundingClientRect();
+      const w = imp.offsetWidth || 100, h = imp.offsetHeight || 30;
+      const left = Math.max(8, Math.min(innerWidth - w - 8, r.right - w));
+      let top = r.top - h - 6;
+      if (top < 8) top = Math.min(innerHeight - h - 8, r.bottom + 6);
+      imp.style.left = (left - host.left) + "px";
+      imp.style.top = (top - host.top) + "px";
+    });
+  }
+  imp.addEventListener("mousedown", (e) => e.preventDefault()); // keep the cursor in the chat box
+  imp.onclick = () => { if (chipMode === "done") undoImprove(); else if (chipMode === "idle") improveInPlace(); };
+  addEventListener("resize", updateChip);
+  addEventListener("scroll", () => { if (imp.classList.contains("show")) updateChip(); }, { passive: true, capture: true });
+
+  /** Rewrites what's in the chat box and puts it back in the box. The user still presses send. */
+  async function improveInPlace() {
+    if (improving || !SITE || !ready() || S.settings.enabled === false) return;
+    const raw = getInputText().trim();
+    if (raw.length < 2) { toast("Type what you want first, then I'll improve it."); return; }
+    improving = true; chipState("busy"); mood("think");
+    pickLearnedLens();
+    const ctx = ctxNow(), lens = currentLens;
+    const res = await rewrite(raw, ctx, lens);
+    mood(null);
+    // Still typing while Pepper worked: never throw the newer words away.
+    if (getInputText().trim() !== raw) { improving = false; chipState("idle"); toast("You kept typing, so I left your text alone. Click Improve again."); return; }
+    showResult({ ...res, raw, lens, lensSource, ctx, overrides: {} }); // the panel shows it, with anything to confirm
+    const text = C.composeInsert(out.prompt, ctx.files, true);
+    const r = await insertIntoSite(text);
+    improving = false;
+    if (!r.ok) { chipState("idle"); toast(r.method === "clipboard" ? "I couldn't write into the box, so the better prompt is copied. Paste it in." : "I couldn't reach the box. Open Pepper to copy the prompt."); return; }
+    lastInsert = { insertedAt: Date.now(), insertedText: text, raw, lens, lensSource, projectId: S.activeProjectId, projectType: ctx.projectType, engine: res.engine };
+    improvedText = getInputText();
+    undoState = { before: raw };
+    chipState("done");
+    mood("happy", 1400);
+    const n = out.assumptions.length;
+    if (res.engine === "offline") toast(res.noAI ? `No AI connected, so I've asked ${SITE.name} to work out what you mean first. Connect a free AI in Pepper's settings to see a full rewrite.` : `Your AI didn't answer, so I've asked ${SITE.name} to sharpen it instead.`);
+    else if (n) toast(`Improved. I wasn't sure about ${n} detail${n === 1 ? "" : "s"}; click me to add ${n === 1 ? "it" : "them"}.`);
+  }
+  async function undoImprove() {
+    if (!undoState) return chipState("idle");
+    const before = undoState.before;
+    undoState = null; lastInsert = null; improvedText = "";
+    const r = await insertIntoSite(before);
+    chipState("idle");
+    toast(r.ok ? "Back to what you wrote." : "Couldn't put it back. Press Ctrl+Z in the box.");
   }
 
   /* ---------------- consent: re-read at every send, never cached ---------------- */
@@ -1600,6 +1688,9 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   /* ---------------- send detection + reply capture (AI sites only) ---------------- */
   let lastSend = null, pending = null;
   function onKeyDownCapture(e) {
+    if (e.key === "Enter" && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && inputEl && (e.target === inputEl || inputEl.contains(e.target)) && ready() && S.settings.improveButton !== false) {
+      e.preventDefault(); e.stopPropagation(); improveInPlace(); return;
+    }
     if (e.key !== "Enter" || e.shiftKey || e.isComposing || e.altKey) return;
     if (!inputEl || !(e.target === inputEl || inputEl.contains(e.target))) return;
     onSend();
@@ -1690,6 +1781,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
       inputEl = el;
       el.addEventListener("input", onType, true);
     }
+    updateChip();
   }
   function scheduleAttach() { if (attachTimer) return; attachTimer = setTimeout(() => { attachTimer = null; attach(); }, 250); }
   function bind() {
@@ -1708,6 +1800,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     document.removeEventListener("click", onClickCapture, true);
     if (pending) { pending.cancelled = true; pending = null; }
     orb.classList.remove("rec", "typed");
+    imp.classList.remove("show");
   }
   // Where Pepper shows: on the AI sites; everywhere if the user chose that; or on a page they called it to.
   let summoned = false;
@@ -1724,6 +1817,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     refreshVisibility();
     orb.classList.toggle("alert", on && !ready());
     if (on && ready()) bind(); else unbind(); // off, or not set up yet: nothing is recorded
+    updateChip();
   }
   document.addEventListener("fullscreenchange", applyEnabled);
 
@@ -1732,6 +1826,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     if (msg.type === "PING") { sendResponse({ pong: true }); return; }
     if ((msg.type === "TOGGLE_PANEL" || msg.type === "OPEN_PANEL") && S.settings.enabled !== false) summoned = true;
     if (msg.type === "TOGGLE_PANEL" && S.settings.enabled !== false) togglePanel();
+    if (msg.type === "IMPROVE" && S.settings.enabled !== false) { if (SITE) improveInPlace(); else { summoned = true; openPanel({ tab: "prompt" }); } }
     if (msg.type === "OPEN_PANEL" && S.settings.enabled !== false) { if (panel.classList.contains("show") && !msg.tab) return; openPanel({ tab: msg.tab, text: msg.text }); }
     // The popup asks which site this tab is, so it needs no "tabs" permission.
     if (msg.type === "WHO") sendResponse({ site: SITE ? SITE.id : null, name: SITE ? SITE.name : HOST, host: HOST, ai: !!SITE });
@@ -1783,7 +1878,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     chrome.storage.onChanged.addListener((ch, area) => {
       if (area !== "local") return;
       for (const [k, v] of Object.entries(KEYMAP)) if (ch[k]) S[v] = ch[k].newValue ?? (v === "activeProjectId" ? null : S[v]);
-      if (ch.pepper_settings) S.settings = redactKey(S.settings);
+      if (ch.pepper_settings) { S.settings = redactKey(S.settings); aiState = null; if (panel.classList.contains("show")) refreshAI(); }
       if (ch.pepper_settings || ch.pepper_profile || ch.pepper_ui) applyEnabled();
       if ((ch.pepper_consent || ch.pepper_settings) && pending && !learningOn()) { pending.cancelled = true; } // revoked mid-capture
       if (ch.pepper_pocket) { const ids = new Set(S.pocket.map(i => String(i.id))); for (const k of fileCache.keys()) if (!ids.has(String(k))) fileCache.delete(k); }
