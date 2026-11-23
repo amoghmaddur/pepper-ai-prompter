@@ -143,8 +143,13 @@ const R = {
     async render() {
       $("key").value = "";
       $("key").placeholder = D.settings.hasKey ? `A key is saved (${D.settings.keyHint || "hidden"}). Paste a new one to replace it.` : "Paste your key";
-      if (!$("provider").options.length) AI.fillSelect($("provider"), await AI.suggested(D.settings.provider));
-      syncKey();
+      // Filled at once (so Finish never reads an empty list), then moved to Chrome's own AI if this browser has it.
+      if (!$("provider").options.length) {
+        AI.fillSelect($("provider"), D.settings.provider && D.settings.provider !== "none" ? D.settings.provider : "gemini");
+        syncKey();
+        const best = await AI.suggested(D.settings.provider);
+        if (best !== $("provider").value && !$("provider").dataset.touched) { $("provider").value = best; syncKey(); }
+      } else syncKey();
     },
     check: () => ""
   },
@@ -212,7 +217,7 @@ function syncKey() {
     : p === "none" ? "You can connect one any time in Pepper's settings."
     : "When you ask Pepper to write, what you typed, your profile answers, active memories, your project's files and the end of the chat on screen go to that provider, and nowhere else. The key stays in this browser.";
 }
-$("provider").onchange = syncKey;
+$("provider").onchange = () => { $("provider").dataset.touched = "1"; syncKey(); };
 const say = (cls, text) => { $("keyNote").className = "small " + cls; $("keyNote").textContent = text; };
 $("testKey").onclick = async () => {
   const provider = $("provider").value, apiKey = $("key").value.trim();

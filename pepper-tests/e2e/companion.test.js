@@ -68,6 +68,7 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       await ob.screenshot({ path: path.join(SHOTS, "v04-onboarding-powers.png") });
       await ob.check('#powers input[data-f="autofill"]'); await ob.check("#learn"); await ob.click("#next");
       await ob.fill('#details input[data-d="email"]', "maya@example.com"); await ob.click("#next");
+      await until(async () => (await ob.inputValue("#provider")) === "gemini", 3000);
       assert.equal(await ob.inputValue("#provider"), "gemini", "no built-in AI in this browser, so the free Gemini key is suggested");
       assert.match(await ob.innerHTML("#keyHelp"), /aistudio\.google\.com\/apikey/);
       await ob.screenshot({ path: path.join(SHOTS, "v05-onboarding-ai.png") });
