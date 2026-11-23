@@ -314,7 +314,10 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 .star{width:36px;height:36px;border:0;background:none;font-size:24px;line-height:1;color:var(--muted);opacity:.45;padding:0;border-radius:8px}
 .star.on{opacity:1;color:var(--corn)}
 .rate-foot{font-size:12px;color:var(--muted);margin:6px 0 0}
-.toast{display:none;max-width:min(320px,calc(100vw - 32px));border-radius:12px;padding:9px 12px;font-size:13px}
+/* Toasts sit beside Pepper, so an open panel never pushes them off the screen. */
+.toast{display:none;position:absolute;right:62px;bottom:4px;width:max-content;max-width:min(320px,calc(100vw - 110px));border-radius:12px;padding:9px 12px;font-size:13px;z-index:2}
+.wrap.left .toast{right:auto;left:62px}
+.wrap.down .toast{bottom:auto;top:4px}
 .toast.show{display:block;animation:pop .16s ease-out}
 .hint{display:none;max-width:260px;border-radius:16px 16px 4px 16px;padding:10px 12px;font-size:13px;position:relative}
 .wrap.left .hint{border-radius:16px 16px 16px 4px}
@@ -535,13 +538,13 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 
   /* ---------------- position: drag Pepper anywhere; she remembers per site ---------------- */
   let placed = {};
-  function placeHost(pos) {
+  function placeHost(pos, forceDown) {
     const p = placed = pos || {};
     const side = p.side === "left" ? "left" : "right";
     const x = Math.max(8, Math.min(innerWidth - 70, +p.x || 18));
     const y = Math.max(8, Math.min(innerHeight - 70, +p.bottom || 24));
-    // High on the screen, Pepper opens downwards so the panel fits.
-    const down = y > innerHeight * 0.55;
+    // High on the screen, Pepper opens downwards; fitPanel picks the roomier side when the panel opens.
+    const down = typeof forceDown === "boolean" ? forceDown : y > innerHeight * 0.55;
     hostEl.style.left = side === "left" ? x + "px" : "auto";
     hostEl.style.right = side === "right" ? x + "px" : "auto";
     hostEl.style.top = down ? Math.max(8, innerHeight - y - 54) + "px" : "auto";
@@ -553,9 +556,11 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   /** The panel never runs off the screen: it gets the room between Pepper and the screen's edge. */
   function fitPanel() {
     if (!panel.classList.contains("show")) return;
-    const r = orb.getBoundingClientRect();
-    const room = wrap.classList.contains("down") ? innerHeight - r.bottom - 22 : r.top - 22;
-    panel.style.maxHeight = Math.max(240, Math.min(room, 760)) + "px";
+    let r = orb.getBoundingClientRect();
+    const wantDown = innerHeight - r.bottom > r.top;
+    if (wantDown !== wrap.classList.contains("down")) { placeHost(placed, wantDown); r = orb.getBoundingClientRect(); }
+    const room = (wrap.classList.contains("down") ? innerHeight - r.bottom : r.top) - 18;
+    panel.style.maxHeight = Math.max(120, Math.min(room, 760)) + "px";
   }
   window.addEventListener("resize", () => { placeHost(placed); fitPanel(); }, { passive: true });
   let drag = null;
@@ -634,7 +639,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
       else if (tab === "pocket") $("pq").focus();
     }, 0);
   }
-  function closePanel() { panel.classList.remove("show"); wrap.classList.remove("awake"); refreshVisibility(); }
+  function closePanel() { panel.classList.remove("show"); wrap.classList.remove("awake"); placeHost(placed); refreshVisibility(); }
   $("close").onclick = () => { closePanel(); orb.focus(); };
   $("dash").onclick = () => send({ type: "OPEN_PAGE", page: "dashboard.html" });
   $("back").onclick = () => showCompose();
@@ -1152,7 +1157,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
       if (why) { toast(why); continue; }
       const buf = await f.arrayBuffer();
       let text = "";
-      if (A.isTextLike(f.name, f.type)) text = new TextDecoder().decode(buf).slice(0, 200000);
+      if (A.isTextLike(f.name, f.type)) text = new TextDecoder().decode(buf).slice(0, A.TEXT_KEEP);
       else if (/\.docx$/i.test(f.name)) text = await A.extractDocxText(buf);
       const r = await send({ type: "POCKET_ADD_FILE", item: { name: f.name, mime: f.type, text, role: A.isResumeLabel(f.name) && !A.pickResume(S.pocket) ? "resume" : undefined }, data: A.bytesToBase64(new Uint8Array(buf)) });
       if (r && r.ok) n++; else toast((r && r.error) || `Couldn't keep ${f.name}.`);
@@ -1330,26 +1335,61 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     return { tag: el.tagName.toLowerCase(), type: el.type || "", name: el.name || "", id: el.id || "", autocomplete: el.getAttribute("autocomplete") || "",
       label: labelFor(el), placeholder: el.placeholder || "", aria: el.getAttribute("aria-label") || "" };
   }
-  /** A field a person can actually see: a real size, not transparent, on the page, and not covered.
-      Pages can hide extra fields to collect details you didn't mean to give, so those are never filled. */
-  function onScreen(el, min = 8) {
+  /** A field a person can actually see. Pages can hide extra fields to collect details you didn't mean
+      to give, so Pepper only fills fields with a real size, no near-transparent ancestor, not clipped away,
+      not drawn in transparent text, and somewhere on the page you could scroll to. */
+  const clear = (c) => /^transparent$|rgba\([^)]*,\s*0(\.0+)?\)$/.test(String(c || "").trim());
+  function fieldShown(el, min = 8) {
     const r = el.getBoundingClientRect();
     if (r.width < min || r.height < min) return false;
     if (el.checkVisibility && !el.checkVisibility({ opacityProperty: true, visibilityProperty: true, contentVisibilityAuto: true })) return false;
-    if (!el.checkVisibility && getComputedStyle(el).visibility === "hidden") return false;
-    if (parseFloat(getComputedStyle(el).opacity) < 0.1) return false;
-    const doc = document.documentElement;
-    if (r.right + scrollX <= 0 || r.bottom + scrollY <= 0 || r.left + scrollX >= Math.max(doc.scrollWidth, innerWidth) || r.top + scrollY >= Math.max(doc.scrollHeight, innerHeight)) return false;
-    if (r.top >= 0 && r.left >= 0 && r.bottom <= innerHeight && r.right <= innerWidth) {
-      const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-      // Something on top only counts if it's not part of the field's own wrapper (floating labels sit over empty fields).
-      const own = el.parentElement && el.parentElement.parentElement;
-      if (hit && hit !== el && !el.contains(hit) && hit !== hostEl && !(own && own.contains(hit)) && !(el.labels && [...el.labels].some(l => l.contains(hit)))) return false;
+    let box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom }, opacity = 1, fixed = false;
+    for (let n = el; n && n !== document.documentElement; n = n.parentElement) {
+      const cs = getComputedStyle(n);
+      if (cs.visibility === "hidden" || cs.display === "none") return false;
+      opacity *= parseFloat(cs.opacity) || 0;
+      if (cs.clipPath && cs.clipPath !== "none") return false;
+      if (cs.clip && cs.clip !== "auto" && /absolute|fixed/.test(cs.position)) return false;
+      if (cs.position === "fixed") fixed = true;
+      // A container that hides its overflow cuts the field down to what fits inside it.
+      if (n !== el && /hidden|clip/.test(cs.overflowX + " " + cs.overflowY)) {
+        const b = n.getBoundingClientRect();
+        box = { left: Math.max(box.left, b.left), top: Math.max(box.top, b.top), right: Math.min(box.right, b.right), bottom: Math.min(box.bottom, b.bottom) };
+      }
     }
-    return true;
+    if (opacity < 0.3) return false;
+    if (box.right - box.left < min || box.bottom - box.top < min) return false;
+    const own = getComputedStyle(el);
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName) && (clear(own.color) || clear(own.webkitTextFillColor))) return false;
+    const doc = document.documentElement;
+    if (fixed) return box.right > 0 && box.bottom > 0 && box.left < innerWidth && box.top < innerHeight;
+    return box.right + scrollX > 0 && box.bottom + scrollY > 0 && box.left + scrollX < Math.max(doc.scrollWidth, innerWidth) && box.top + scrollY < Math.max(doc.scrollHeight, innerHeight);
   }
-  // Upload inputs are often hidden behind a styled button, so the input, its label or its container must be visible.
-  const uploadVisible = (el) => onScreen(el) || [...(el.labels || []), el.parentElement].some(x => x && onScreen(x, 16));
+  /** Right before filling: scrolled into view, nothing on top of it at three points. Only the field itself,
+      its label, a see-through label inside its own wrapper, or Pepper's panel may sit above it. */
+  function uncovered(el) {
+    el.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+    return clearNow(el) === true;
+  }
+  /** Checked where the field is now: true or false if it's on screen, null if it isn't (can't tell yet). */
+  function clearNow(el) {
+    const r = el.getBoundingClientRect();
+    if (r.top < 0 || r.left < 0 || r.bottom > innerHeight || r.right > innerWidth) return null;
+    return [0.5, 0.2, 0.8].every(fx => {
+      const x = Math.min(innerWidth - 1, Math.max(0, r.left + r.width * fx)), y = Math.min(innerHeight - 1, Math.max(0, r.top + r.height / 2));
+      for (const hit of document.elementsFromPoint(x, y)) {
+        if (hit === el || el.contains(hit)) return true;
+        if (hit === hostEl) continue;
+        if (el.labels && [...el.labels].some(l => l === hit || l.contains(hit))) continue;
+        if (/^(LABEL|SPAN)$/.test(hit.tagName) && clear(getComputedStyle(hit).backgroundColor) && el.parentElement && el.parentElement.contains(hit)) continue;
+        return false;
+      }
+      return false;
+    });
+  }
+  // Upload inputs often hide behind a styled button: the input, its label or a small wrapper holding only it must show.
+  const controlLike = (x) => { const b = x.getBoundingClientRect(); return b.width <= 700 && b.height <= 240 && x.querySelectorAll("input:not([type=hidden]),select,textarea").length <= 1; };
+  const uploadVisible = (el) => fieldShown(el) || [...(el.labels || []), el.parentElement].some(x => x && fieldShown(x, 16) && controlLike(x));
   const formOf = (el) => el.form || (el.closest && el.closest("form")) || null;
   function scanFields() {
     let fields = [], fileFields = [];
@@ -1361,7 +1401,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
         fileFields.push({ el, label: d.label || d.name || "File upload", resume: A.isResumeLabel(d.label + " " + d.name + " " + d.id + " " + (el.accept || "")) });
         continue;
       }
-      if (!onScreen(el)) continue;
+      if (!fieldShown(el) || clearNow(el) === false) continue; // covered fields aren't even listed
       const c = A.classifyField(fieldDescriptor(el));
       if (!c) continue;
       const value = A.detailValue(c.key, S.details);
@@ -1403,6 +1443,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
       const i = +b.dataset.attach, id = $("fillBody").querySelector(`select[data-fi="${i}"]`).value;
       const item = S.pocket.find(x => String(x.id) === id);
       if (!item) return;
+      if (!fileFields[i].el.isConnected || !uploadVisible(fileFields[i].el)) { toast("That upload field isn't on the screen any more."); scanForm(); return; }
       const f = await fileFor(item);
       toast(f && attachFile(fileFields[i].el, f) ? `Attached ${item.name}.` : "This upload field didn't take it. Drag the file from the Pocket instead.");
     });
@@ -1412,11 +1453,14 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   $("fillGo").onclick = () => {
     if (!formCache) return;
     let n = 0;
+    const back = [scrollX, scrollY];
     $("fillBody").querySelectorAll("input[data-i]:checked").forEach(c => {
       const f = formCache.fields[+c.dataset.i];
-      // Still there, still visible, and still empty now: never overwrite something you typed after the scan.
-      if (f && f.el.isConnected && !String(f.el.value || "").trim() && onScreen(f.el) && setFieldValue(f.el, f.value)) n++;
+      // Still there, still empty, and visible and uncovered right now: never overwrite something you
+      // typed after the scan, and never fill a field the page has since hidden.
+      if (f && f.el.isConnected && !String(f.el.value || "").trim() && fieldShown(f.el) && uncovered(f.el) && setFieldValue(f.el, f.value)) n++;
     });
+    scrollTo(back[0], back[1]);
     toast(n ? `Filled ${n} field${n === 1 ? "" : "s"}. Check them before you submit.` : "Nothing was filled.");
     if (n) mood("happy", 1600);
     scanForm();

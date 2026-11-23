@@ -258,7 +258,7 @@ async function handleFiles(list) {
     if (why) { $("dropNote").className = "small bad"; $("dropNote").textContent = why; continue; }
     $("dropNote").className = "small"; $("dropNote").textContent = `Adding ${f.name}…`;
     const buf = await f.arrayBuffer();
-    const text = A.isTextLike(f.name, f.type) ? new TextDecoder().decode(buf).slice(0, 200000) : /\.docx$/i.test(f.name) ? await A.extractDocxText(buf) : "";
+    const text = (A.isTextLike(f.name, f.type) ? new TextDecoder().decode(buf) : /\.docx$/i.test(f.name) ? await A.extractDocxText(buf) : "").slice(0, A.TEXT_KEEP);
     const r = await chrome.runtime.sendMessage({ type: "POCKET_ADD_FILE", item: { name: f.name, mime: f.type, text, role: A.isResumeLabel(f.name) && !A.pickResume(D.pocket) ? "resume" : undefined }, data: A.bytesToBase64(new Uint8Array(buf)) });
     if (r && r.ok) { n++; D.pocket = [r.item, ...D.pocket]; } else { $("dropNote").className = "small bad"; $("dropNote").textContent = (r && r.error) || `Couldn't add ${f.name}.`; }
   }
@@ -295,7 +295,7 @@ function renderFiles() {
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     };
     const sv = row.querySelector("[data-save]");
-    if (sv) sv.onclick = () => { const t = row.querySelector("textarea").value; if (t.trim()) store({ op: "listPatch", key: "pepper_pocket", id, patch: { text: t.slice(0, 200000), needsText: false } }); };
+    if (sv) sv.onclick = () => { const t = row.querySelector("textarea").value; if (t.trim()) store({ op: "listPatch", key: "pepper_pocket", id, patch: { text: t.slice(0, A.TEXT_KEEP), needsText: false } }); };
   });
 }
 $("linkForm").onsubmit = async (e) => {
@@ -635,7 +635,7 @@ async function saveSettings() {
   // Keys go to the worker's vault, never into storage that web pages' scripts could read.
   if (provider === "none") await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" });
   else if (key) await chrome.runtime.sendMessage({ type: "SET_KEY", provider, apiKey: key });
-  else await store({ op: "objPatch", key: "pepper_settings", patch: { provider } });
+  else await chrome.runtime.sendMessage({ type: "SET_KEY", provider }); // a different provider drops the old key
   await store({ op: "objPatch", key: "pepper_settings", patch: { model: $("sModel").value.trim(), minChars: Math.max(2, Math.min(40, +$("sMin").value || 6)) } });
   $("sKey").value = "";
 }
@@ -651,6 +651,7 @@ $("export").onclick = async () => {
   const s = await chrome.storage.local.get(null);
   delete s.pepper_settings; // settings hold the key: never exported
   // File contents and the key live in the worker's vault and aren't exported; download files from the Pocket.
+  for (const k of Object.keys(s)) if (k.startsWith("pepper_blob_")) delete s[k]; // in case an old copy is still in storage
   const blob = new Blob([JSON.stringify({ exportedAt: new Date().toISOString(), product: C.PRODUCT, ...s }, null, 2)], { type: "application/json" });
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "pepper-data.json"; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);

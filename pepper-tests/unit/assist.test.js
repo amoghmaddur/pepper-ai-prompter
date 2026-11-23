@@ -270,3 +270,17 @@ test("Autofill: a label that names two details is skipped unless the field's nam
   assert.equal(F({ label: "Email address" }), "email");
   assert.equal(F({ label: "", name: "city", aria: "" }), "city", "the name alone is enough when there's no label");
 });
+
+test("Fix: fenced code comes back whole, and imports, assignments, calls and shell lines count as code", () => {
+  assert.equal(A.tidyText("Here is my code:\n```js\nconst x = 1;\n```\nthanks").text, "Here is my code:\n```js\nconst x = 1;\n```\nThanks");
+  for (const line of ["import os", "from pathlib import Path", "x = 1", "print(f(2))", "npm install foo", "pip install requests", "git commit -m x"])
+    assert.equal(A.tidyText(line).text, line, line);
+  assert.ok(!A.tidyText("teh end").text.includes("\u0000"));
+});
+test("Autofill: second address lines are left alone, 'first and last name' is the full name, and a field's own clues beat a section heading", () => {
+  assert.equal(F({ label: "Address line 2", autocomplete: "address-line2" }), null);
+  assert.equal(F({ label: "Apt, suite, unit" }), null);
+  assert.equal(F({ label: "First and last name" }), "fullName");
+  assert.equal(F({ label: "Address", placeholder: "City", name: "city" }), "city");
+  assert.equal(F({ label: "First Name*", name: "job_application[first_name]" }), "firstName", "agreeing clues still work");
+});

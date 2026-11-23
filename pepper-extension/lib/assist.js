@@ -87,7 +87,7 @@
     { id: "preferredName", label: "Preferred name", re: /preferred.?(first.?)?name|nick.?name/ },
     { id: "firstName", label: "First name", ac: ["given-name"], re: /first.?name|given.?name|\bfname\b|forename/ },
     { id: "lastName", label: "Last name", ac: ["family-name"], re: /last.?name|family.?name|surname|\blname\b/ },
-    { id: "fullName", label: "Full name", ac: ["name"], re: /full.?name|legal.?name|candidate.?name|applicant.?name/, whole: /^(your )?name$/ },
+    { id: "fullName", label: "Full name", ac: ["name"], re: /full.?name|legal.?name|candidate.?name|applicant.?name|first\W*(and|&|\/)?\W*last.?name/, whole: /^(your )?name$/ },
     { id: "address", label: "Street address", ac: ["street-address", "address-line1"], re: /street|address.?(line)?.?1?$|^address/ },
     { id: "city", label: "City", ac: ["address-level2"], re: /\bcity\b|\btown\b/ },
     { id: "state", label: "State or province", ac: ["address-level1"], re: /\bstate\b|province|\bregion\b/ },
@@ -103,6 +103,8 @@
   ];
   const DETAIL_IDS = DETAILS.map(d => d.id);
   const NARROWER = { preferredName: ["firstName", "fullName"], email: ["address"], website: ["address"], linkedin: ["website"], github: ["website"], firstName: ["fullName"], lastName: ["fullName"] };
+  // Pepper keeps one street address line, so second lines (apartment, suite) are left for you.
+  const SECOND_LINE_RE = /address.?line.?[23]|\bapt\b|apartment|\bsuite\b|\bunit\b|address.?2\b/;
   // Never filled, never stored: secrets, payment and government identifiers.
   const SKIP_RE = /pass(word|code)|\botp\b|one.?time|captcha|search|coupon|promo|card|cvv|cvc|security.?code|\bssn\b|social.?security|national.?id|passport|\btax\b|routing|account.?(number|no)|iban|swift|salary|compensation|username|user.?name|login|birth|\bdob\b|\bage\b/;
   const SKIP_TYPES = new Set(["password", "hidden", "file", "checkbox", "radio", "submit", "button", "reset", "image", "search", "range", "color", "date", "datetime-local", "month", "week", "time"]);
@@ -116,17 +118,30 @@
     const hay = parts.join(" | ");
     if (SKIP_RE.test(hay)) return null;
     const ac = String(d.autocomplete || "").toLowerCase().split(/\s+/).filter(t => t && !/^(section-|shipping|billing|home|work|mobile|fax|pager)/.test(t));
+    if (ac.some(t => /^address-line[23]$/.test(t)) || SECOND_LINE_RE.test(hay)) return null;
     for (const det of DETAILS) if (det.ac && det.ac.some(t => ac.includes(t))) return { key: det.id, via: "autocomplete" };
     if (type === "email") return { key: "email", via: "type" };
     if (type === "tel") return { key: "phone", via: "type" };
     if (!hay) return null;
-    // Evidence in order: label, aria-label, placeholder, then name and id. A clue that names two
-    // details ("City, State") is ambiguous; a later clue may settle it, otherwise Pepper leaves the field.
-    let maybe = null;
-    for (const p of parts) {
-      let hits = DETAILS.filter(det => (det.whole && det.whole.test(p)) || det.re.test(p)).map(d => d.id);
+    const hitsFor = (p) => {
+      if (!p) return [];
+      if (/first\W*(and|&|\/)?\W*last.?name/.test(p)) return ["fullName"]; // "First and last name" is the whole name
+      let hits = DETAILS.filter(det => (det.whole && det.whole.test(p)) || det.re.test(p)).map(x => x.id);
       // A narrower detail wins over the broader one it overlaps ("Preferred first name", "Email address").
       if (hits.length > 1 && hits.slice(1).every(h => (NARROWER[hits[0]] || []).includes(h))) hits = [hits[0]];
+      return hits;
+    };
+    // The field's own clues (aria-label, placeholder, name, id) beat a label, which may be a section
+    // heading above several fields. When they agree on one detail, that's the answer.
+    const own = [d.aria, d.placeholder, d.name, d.id].map(norm).map(hitsFor).filter(h => h.length === 1).map(h => h[0]);
+    const agreed = own.length && own.every(h => h === own[0]) ? own[0] : null;
+    const label = hitsFor(norm(d.label));
+    if (agreed && !(label.length === 1 && label[0] === agreed)) return { key: agreed, via: "field" };
+    // Otherwise evidence in order: label, aria-label, placeholder, name, id. A clue naming two details
+    // ("City, State") is ambiguous; a later clue may settle it, or Pepper leaves the field alone.
+    let maybe = null;
+    for (const p of parts) {
+      const hits = hitsFor(p);
       const pick = maybe ? hits.filter(h => maybe.includes(h)) : hits;
       if (pick.length === 1) return { key: pick[0], via: "label" };
       if (pick.length > 1 && !maybe) maybe = pick;
@@ -219,8 +234,14 @@
   function looksLikeCode(line) {
     const l = String(line);
     if (!l.trim()) return false;
-    return /^( {2,}|\t)\S/.test(l) || /[{};]\s*$/.test(l) || /^\s*(def|class|import|from|return|const|let|var|function|if|elif|else|for|while|try|except|public|private|#include)\b.*[(:=\[{]/.test(l)
-      || /\w\([^)]*\)\s*[:{]?\s*$/.test(l) && /[=:(]/.test(l) && !/[.!?]\s*$/.test(l) || /^\s*[$>#]\s/.test(l) || /=>|===|!==|&&|\|\|/.test(l);
+    return /^( {2,}|\t)\S/.test(l)                                   // indented
+      || /[{};]\s*$/.test(l)                                          // ends like a statement or block
+      || /^\s*(import|from|export|require|package|using|#include|def|class|return|const|let|var|function|elif|except|public|private|static|async|await|lambda)\b/.test(l)
+      || /^\s*(if|for|while|else|try|with|switch|elif)\b.*[():{]\s*$/.test(l) // control flow ending in ( ) : or {
+      || /^\s*[\w.$\[\]"']+\s*([-+*/%]|\*\*|\/\/|\|\||&&|\?\?)?=(?!=)\s*\S/.test(l) && !/[.!?]\s*$/.test(l) // assignment
+      || /^\s*[\w.$]+\(.*\)\s*;?\s*$/.test(l)                       // a lone call
+      || /^\s*([$>#%]\s|(npm|npx|pnpm|yarn|pip3?|python3?|node|git|cd|ls|curl|wget|brew|apt(-get)?|sudo|docker|kubectl|go|cargo|make|java|javac|gcc)\s)/.test(l) // shell
+      || /=>|===|!==|&&|\|\||::|->/.test(l);
   }
   /** Spelling, spacing and capitals, offline. Returns {text, changes:[{from,to}]}; code and links are left alone. */
   function tidyText(input) {
@@ -229,9 +250,11 @@
     const note = (from, to, kind) => { if (from !== to && changes.length < 80) changes.push({ from, to, kind: kind || "word" }); };
     // Protect URLs, emails, @handles and `code` from every rule below.
     const keep = [];
-    // Code is left exactly as written, line by line.
-    let t = src.split("\n").map(line => looksLikeCode(line) ? (keep.push(line), `\u0000${keep.length - 1}\u0000`) : line).join("\n");
-    t = t.replace(/```[\s\S]*?```|`[^`]*`|https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|@\w+/g, m => { keep.push(m); return `\u0000${keep.length - 1}\u0000`; });
+    const hold = (m) => { keep.push(m); return `\u0000${keep.length - 1}\u0000`; };
+    // Fenced code blocks first, then code lines, then inline code, links, emails and @handles.
+    let t = src.replace(/```[\s\S]*?(```|$)/g, hold);
+    t = t.split("\n").map(line => line.includes("\u0000") || !looksLikeCode(line) ? line : hold(line)).join("\n");
+    t = t.replace(/`[^`\n]*`|https?:\/\/\S+|www\.\S+|\S+@\S+\.\S+|@\w+/g, hold);
     t = t.replace(/\b([A-Za-z]+)\b/g, (w) => {
       const lw = w.toLowerCase();
       if (lw === "i") { if (w !== "I") note("i", "I", "caps"); return "I"; }
@@ -254,7 +277,8 @@
       if (p === "." && /(\be\.g|\bi\.e|\betc|\bvs|\bapprox|\bincl|\bmr|\bmrs|\bms|\bdr|\bst|\bno)$/i.test(str.slice(Math.max(0, off - 7), off))) return m;
       return p + sp + cap(c);
     });
-    t = t.replace(/\u0000(\d+)\u0000/g, (m, i) => keep[+i]);
+    // Restore until nothing is held back (a held piece can contain another).
+    for (let i = 0; i < 5 && t.includes("\u0000"); i++) t = t.replace(/\u0000(\d+)\u0000/g, (m, n) => keep[+n]);
     // One entry per distinct fix, with a count, so the summary stays short.
     const by = new Map();
     for (const c of changes) { const k = c.kind + "|" + c.from + "|" + c.to; const e = by.get(k); if (e) e.count++; else by.set(k, { ...c, count: 1 }); }
@@ -362,6 +386,9 @@
 
   /* ---------------- Pocket ---------------- */
   const POCKET_LIMITS = { file: 15 * 1024 * 1024, total: 250 * 1024 * 1024, items: 500 };
+  // Text kept beside the Pocket list so prompts can use a file (they use at most 2,500 characters of it).
+  // The whole file stays in the worker's vault.
+  const TEXT_KEEP = 10000;
   const MIME = { pdf: "application/pdf", doc: "application/msword", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     txt: "text/plain", md: "text/markdown", csv: "text/csv", json: "application/json", html: "text/html", rtf: "application/rtf",
     png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml",
@@ -459,7 +486,7 @@
   const HANDOFF_TTL = 2 * 60 * 1000;
 
   const PepperAssist = {
-    AI_SITES, FOCUS, THINK, FEATURES, REQUIRED, DETAILS, DETAIL_IDS, HELPERS, HELPER_IDS, POCKET_LIMITS, HANDOFF_TTL, ATS_HOSTS,
+    AI_SITES, FOCUS, THINK, FEATURES, REQUIRED, DETAILS, DETAIL_IDS, HELPERS, HELPER_IDS, POCKET_LIMITS, TEXT_KEEP, HANDOFF_TTL, ATS_HOSTS,
     defaultFeatures, missingSetup, setupComplete, favorites, defaultLens, firstName, greeting,
     classifyField, detailValue, matchOption, looksLikeCard, sensitiveLabel, templateVars, fillTemplate,
     tidyText, looksLikeCode, helperSystem, helperUser, helperPrompt, pageKind, defaultTab, isResumeLabel,

@@ -62,7 +62,7 @@ Pepper's setup opens: about two minutes, one question per screen. Its features u
 
 | | What | Result |
 |---|---|---|
-| Unit | 133 tests: prompt engine, autofill matching, quick fixes, reminders, the Pocket, onboarding rules, the real worker in a fake Chrome with racing storage, page wiring, the privacy notice, the package | **133 / 133** |
+| Unit | 138 tests: prompt engine, autofill matching, quick fixes, reminders, the Pocket, onboarding rules, the real worker in a fake Chrome with racing storage, page wiring, the privacy notice, the package | **138 / 138** |
 | Browser | 36 checks with the extension loaded: onboarding, every tool, insert without sending, hand-offs, drag and attach, form filling (and never filling hidden fields), keyboard use, consent gates, closed shadow root, data controls | **36 / 36 in Chromium 153, Brave 157 and Edge 154** |
 | Live sites | Logged out, 2026-11-22: Pepper appears, opens and inserts into the real box, nothing sent | **Gemini ✓, Perplexity ✓**. ChatGPT and Claude show bot checks to automated browsers; Copilot asks for sign-in |
 

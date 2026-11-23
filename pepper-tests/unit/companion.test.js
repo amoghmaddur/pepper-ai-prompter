@@ -280,3 +280,36 @@ test("Reminders: nothing fires after reminders are turned off, a snooze doesn't 
   await bg.settle();
   assert.equal(bg.notifications.length, 0, "a reminder that was turned off never shows");
 });
+
+test("A saved key belongs to its provider: switching provider without a new key drops it, and it's never sent to the other one", async () => {
+  const bg = await readyBg();
+  await bg.send({ type: "SET_KEY", provider: "anthropic", apiKey: "sk-ant-123456789" }, bg.fromExt);
+  await bg.send({ type: "SET_KEY", provider: "openai" }, bg.fromExt);
+  const st = bg.storage._raw().pepper_settings;
+  assert.deepEqual([st.provider, st.hasKey, st.keyHint], ["openai", false, ""]);
+  assert.equal(bg.vault().apiKey, undefined);
+  assert.equal((await bg.send({ type: "LLM", system: "s", user: "u" }, bg.fromExt)).error, "NO_KEY");
+  assert.equal(bg.fetchCalls.length, 0, "nothing sent to OpenAI");
+  // and a key left from before with the wrong owner is refused, not sent
+  await bg.send({ type: "SET_KEY", provider: "openai", apiKey: "sk-o-123456789" }, bg.fromExt);
+  await bg.send({ type: "STORE", op: { op: "objPatch", key: "pepper_settings", patch: { provider: "anthropic" } } }, bg.fromExt);
+  assert.equal((await bg.send({ type: "LLM", system: "s", user: "u" }, bg.fromExt)).error, "NO_KEY");
+  assert.equal(bg.fetchCalls.length, 0);
+  // same provider, no new key: the key stays
+  await bg.send({ type: "SET_KEY", provider: "openai" }, bg.fromExt);
+  assert.equal(bg.vault().apiKey, "sk-o-123456789");
+});
+test("A broken vault doesn't stop install: menus, floating and reminders are still set up", async () => {
+  const bg = loadBackground();
+  bg.sandbox.indexedDB.open = () => { const r = {}; setTimeout(() => r.onerror && r.onerror()); return r; };
+  bg.storage._seed({ pepper_schema: 2, pepper_settings: { enabled: true, provider: "anthropic", apiKey: "sk-x" }, pepper_profile: { answers: ANSWERS, completed: true }, pepper_history: [] });
+  await bg.install({ reason: "update", previousVersion: "0.4.0" });
+  await bg.settle();
+  assert.ok(bg.menus.length >= 5, "the right-click menu exists");
+});
+test("Text kept beside the Pocket list is capped; the whole file stays in the vault", async () => {
+  const bg = await readyBg();
+  const r = await bg.send({ type: "POCKET_ADD_FILE", item: { name: "notes.txt", text: "x".repeat(50000) }, data: b64(50000, 120) }, bg.fromExt);
+  assert.equal(r.item.text.length, A.TEXT_KEEP);
+  assert.equal(bg.vault()[A.blobKey(r.id)].length, b64(50000, 120).length);
+});

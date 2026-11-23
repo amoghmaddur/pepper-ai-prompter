@@ -129,7 +129,23 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       assert.ok(box.y >= 0 && box.y + box.height <= 860 + 1, `panel inside the screen (top ${Math.round(box.y)}, bottom ${Math.round(box.y + box.height)})`);
       assert.ok(await P(page, "#close").isVisible());
       await P(page, "#close").click();
-      await storage.patch("pepper_ui", { "example.org": {} }); await page.reload(); await page.waitForTimeout(900);
+      try {
+        await page.setViewportSize({ width: 1280, height: 560 });
+        await storage.patch("pepper_ui", { "example.org": { pos: { side: "right", x: 18, bottom: 300 } } });
+        await page.reload(); await page.waitForTimeout(900);
+        await P(page, "#orb").click();
+        const small = await P(page, "#panel").boundingBox();
+        assert.ok(small.y >= 0 && small.y + small.height <= 561, `panel inside a 560px window (top ${Math.round(small.y)}, bottom ${Math.round(small.y + small.height)})`);
+        await P(page, '.tab[data-tab="pocket"]').click();
+        await P(page, "#pSavePage").click();
+        await P(page, "#toast").waitFor({ state: "visible", timeout: 3000 });
+        const t = await P(page, "#toast").boundingBox();
+        assert.ok(t.y >= 0 && t.y + t.height <= 561, `the toast stays on screen while the panel is open (top ${Math.round(t.y)})`);
+      } finally {
+        await closeP(page);
+        await page.setViewportSize({ width: 1280, height: 860 });
+        await storage.patch("pepper_ui", { "example.org": {} }); await page.reload(); await page.waitForTimeout(900);
+      }
     });
 
     await t.test("Writing helper: select text in a field, Pepper's pill appears, Fix corrects it offline and Replace puts it back", async () => {
@@ -247,7 +263,7 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       });
       assert.deepEqual(dropped.files, ["Maya_Resume.pdf:26:application/pdf"]);
       assert.deepEqual(dropped.page, ["Maya_Resume.pdf:26"]);
-      const link = await P(page, ".pi").filter({ hasText: "Remote work notes" }).evaluate((el) => {
+      const link = await P(page, ".pi").filter({ hasText: "Remote work notes" }).first().evaluate((el) => {
         const dt = new DataTransfer(); el.dispatchEvent(new DragEvent("dragstart", { dataTransfer: dt, bubbles: true, cancelable: true, composed: true }));
         return dt.getData("text/uri-list");
       });
@@ -256,7 +272,9 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
     });
 
     await t.test("Fill: on a job application Pepper offers to help, fills only empty fields, attaches the resume, never submits", async () => {
-      await storage.patch("pepper_details", { fullName: "Maya Rao", phone: "617-555-0100", linkedin: "https://linkedin.com/in/maya", country: "USA", city: "Boston" });
+      // Values for every hidden trick on the page, so a leak would show up as a filled field.
+      await storage.patch("pepper_details", { fullName: "Maya Rao", phone: "617-555-0100", linkedin: "https://linkedin.com/in/maya", country: "USA", city: "Boston",
+        address: "1 Main St", postal: "02115", state: "MA", pronouns: "she/her" });
       const job = await ctx.newPage(); watch(job); await job.goto("https://boards.greenhouse.io/acme/jobs/1"); await job.waitForTimeout(800);
       await P(job, "#hint").waitFor({ state: "visible", timeout: 4000 });
       assert.match(await P(job, "#hintText").textContent(), /application\. I can fill \d+ fields? and attach your resume/);
@@ -266,12 +284,14 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       assert.match(await P(job, "#ctxChip").textContent(), /Form · \d+ fields I can fill/);
       await wait(400); await job.screenshot({ path: path.join(SHOTS, "v04-fill.png") });
       await P(job, "#fillGo").click();
-      const v = await job.evaluate(() => Object.fromEntries(["first_name", "last_name", "email", "phone", "li", "country", "city", "pw", "why", "addr", "ghost", "hid"].map(id => [id, document.getElementById(id).value])));
+      const v = await job.evaluate(() => Object.fromEntries(["first_name", "last_name", "email", "phone", "li", "country", "city", "pw", "why", "addr", "ghost", "hid", "t1", "t2", "t3", "t4", "t5"].map(id => [id, document.getElementById(id).value])));
       assert.deepEqual(v, { first_name: "Maya", last_name: "Rao", email: "maya@example.com", phone: "617-555-0100", li: "https://linkedin.com/in/maya", country: "US", city: "Already typed", pw: "", why: "",
-        addr: "", ghost: "", hid: "" }, "fields a person can't see stay empty");
+        addr: "", ghost: "", hid: "", t1: "", t2: "", t3: "", t4: "", t5: "" },
+        "fields a person can't see stay empty: off-screen, 1px, display:none, a 2% transparent container, a 1x1 clipping box, clip-path, covered, transparent text");
       assert.doesNotMatch(await P(job, "#fillBody").textContent(), /Street address/, "and aren't even listed");
       await P(job, '#fillBody button[data-attach="0"]').click();
-      assert.equal(await job.evaluate(() => window.__changes.resume), "Maya_Resume.pdf", "the site saw the file arrive");
+      await until(() => job.evaluate(() => window.__changes.resume), 3000);
+      assert.equal(await job.evaluate(() => window.__changes.resume), "Maya_Resume.pdf", "the site saw the file arrive (Pepper said: " + await P(job, "#toast").textContent() + ")");
       assert.equal(await job.evaluate(() => window.__submitted), 0, "never submits");
       await job.close();
     });

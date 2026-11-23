@@ -19,7 +19,7 @@ Everything below is kept in your browser's extension storage (`chrome.storage.lo
 | `pepper_settings` | Whether Pepper is on, where it floats, which features are on, your provider, whether a key is saved and its last four characters, the model name, the typing-hint length | When you change a setting |
 | `pepper_profile` | Your setup answers: what to call you, your role, favorite AI sites, what you use AI for, how you like answers, your tone, your focus time, and the optional prompt preferences | When you answer them |
 | `pepper_details` | Personal details you chose to keep for forms, such as your name, email, phone, links, address, school and current job | When you edit them |
-| `pepper_pocket` | The list of things in your Pocket: file names, sizes and types, any text Pepper can use from them, links you saved and templates you wrote | When you add, edit or remove an item |
+| `pepper_pocket` | The list of things in your Pocket: file names, sizes and types, up to 10,000 characters of text from text and Word files (so prompts can use them), links you saved and templates you wrote | When you add, edit or remove an item |
 | `pepper_reminders` | Your reminders: text, time, days and whether each is on | When you change them |
 | `pepper_memories` | Facts you asked Pepper to remember, each on or off | When you add, edit, confirm or delete one |
 | `pepper_projects` | Your projects: name, type, description and which Pocket files are attached | When you create or edit a project |
@@ -31,7 +31,7 @@ Everything below is kept in your browser's extension storage (`chrome.storage.lo
 | `pepper_ui` | Where you dragged the peppercorn on each site, sites where you hid it, and hints you dismissed | When you move it, hide it or dismiss a hint |
 | `pepper_schema` | The storage format version, used to upgrade your data safely | On install and update |
 
-**Your API key and the contents of the files in your Pocket are kept apart,** in a database inside the extension (IndexedDB, named `pepper-vault`) that only Pepper's own pages and its background worker can open. Scripts on web pages can't read it, and neither can the part of Pepper that runs on web pages: its panel asks the worker for a file only when you attach, drag or open it.
+**Your API key and the full contents of the files in your Pocket are kept apart,** in a database inside the extension (IndexedDB, named `pepper-vault`) that only Pepper's own pages and its background worker can open. Scripts on web pages can't read it, and neither can the part of Pepper that runs on web pages: its panel asks the worker for a file when you point at it in the Pocket (so a drag can start straight away), attach, drag or open it. A key is used only with the provider it was saved for; switching provider without a new key removes it.
 
 When you send a prompt from another page to an AI site, Pepper holds it in the browser's session storage for up to two minutes, tied to the tab it opened, and deletes it once it is placed in the box.
 

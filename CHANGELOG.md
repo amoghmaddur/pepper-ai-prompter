@@ -46,9 +46,19 @@ An independent review of 0.4 before release found 14 problems. All are fixed, wi
 - Re-running setup no longer widens learning consent; reminders don't fire after being turned off, after their snooze is cancelled, or hours late after sleep.
 - Idle Pepper no longer animates every frame on pages where it floats.
 
+A second review of those fixes found more, now fixed too:
+
+- The hidden-field check was strengthened: opacity is multiplied through every parent, clipping containers and `clip-path` count, transparent text counts, fixed elements must be on the screen, and when you click Fill each field is scrolled into view and must not be covered by anything but its own label. Upload fields count only if the input, its label or a small wrapper holding just that field is visible, checked again at Attach.
+- Quick fixes return fenced code untouched, and recognize imports, assignments, calls and shell commands as code.
+- A saved key belongs to its provider; switching provider without a new key removes it, so a key is never sent to the other provider.
+- Only up to 10,000 characters of a file's text sit beside the Pocket list (prompts use 2,500); the whole file stays in the vault. The privacy notice now says exactly this.
+- The panel opens towards the side with more room and never runs off a short window; toasts sit beside Pepper so an open panel can't push them off the screen.
+- A database error at startup no longer stops the menu, floating and reminders from being set up.
+- "Address line 2" and "Apt, suite, unit" are left for you; "First and last name" gets the full name; a field's own name and placeholder beat a section heading above it.
+
 ### Verified
 
-- 133 unit tests.
+- 138 unit tests.
 - 36 browser checks with the extension loaded, run in Chromium 153, Brave 157 and Microsoft Edge 154.
 - Live, logged out: Gemini and Perplexity (Pepper appears, opens and inserts into the real box, nothing sent). ChatGPT and Claude show a bot check to automated browsers and need a person; Copilot asks logged-out visitors to sign in.
 

@@ -101,6 +101,11 @@ input,select,textarea{font:inherit;padding:8px;border:1px solid #bbb;border-radi
 <div style="position:absolute;left:-9999px;top:0"><label for="addr">Street address</label><input id="addr" name="address"></div>
 <input id="ghost" name="city" aria-label="City" style="width:1px;height:1px;opacity:0;border:0;padding:0">
 <div style="display:none"><label for="hid">Mobile phone</label><input id="hid"></div>
+<div style="opacity:.02"><label for="t1">Street address</label><input id="t1" name="street"></div>
+<div style="width:1px;height:1px;overflow:hidden"><label for="t2">Town</label><input id="t2" name="town"></div>
+<input id="t3" name="zip" aria-label="ZIP code" style="clip-path:inset(50%)">
+<div style="position:relative"><label for="t4">State</label><input id="t4" name="state"><div style="position:absolute;inset:0;background:#fff"></div></div>
+<label for="t5">Pronouns</label><input id="t5" name="pronouns" style="color:transparent;background:transparent;border-color:transparent">
 <button type="submit">Submit application</button>
 </form><script>
 window.__submitted = 0; window.__changes = {};

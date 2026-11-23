@@ -201,7 +201,7 @@ async function addResume(f) {
   if (why) { $("resumeNote").textContent = why; return; }
   $("resumeNote").textContent = "Adding…";
   const buf = await f.arrayBuffer();
-  const text = A.isTextLike(f.name, f.type) ? new TextDecoder().decode(buf) : /\.docx$/i.test(f.name) ? await A.extractDocxText(buf) : "";
+  const text = (A.isTextLike(f.name, f.type) ? new TextDecoder().decode(buf) : /\.docx$/i.test(f.name) ? await A.extractDocxText(buf) : "").slice(0, A.TEXT_KEEP);
   const r = await chrome.runtime.sendMessage({ type: "POCKET_ADD_FILE", item: { name: f.name, mime: f.type, text, role: "resume" }, data: A.bytesToBase64(new Uint8Array(buf)) });
   $("resumeNote").textContent = r && r.ok ? `In your Pocket: ${f.name}${text ? " (I can read its text, too)" : ""}` : (r && r.error) || "Couldn't add it.";
   if (r && r.ok) D.resume = r.item;
@@ -231,6 +231,7 @@ async function finish() {
   // Keys go to the worker's vault, never into settings.
   if ($("provider").value === "none") await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" });
   else if ($("key").value.trim()) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: $("provider").value, apiKey: $("key").value.trim() });
+  else if ($("provider").value !== (D.settings.provider || "none")) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: $("provider").value });
   await store({ op: "objPatch", key: "pepper_settings", patch: settingsPatch });
   if (D.features.autofill || Object.keys(D.details).length) await store({ op: "set", key: "pepper_details", value: D.details });
   // Learning consent changes only if the switch was changed here: turning it on covers your favorite sites,

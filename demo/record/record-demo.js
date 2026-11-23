@@ -221,7 +221,7 @@ const PEP = `<svg class="orb" viewBox="0 0 48 48"><defs><radialGradient id="g" c
 
     /* 8 · end */
     await card(page, `${PEP}<h1>Pepper v0.4</h1>
-      <div class="row"><span class="pill"><b>133</b> unit tests</span><span class="pill"><b>36</b> browser checks</span><span class="pill">Chromium · Brave · Edge</span><span class="pill">no server</span></div>
+      <div class="row"><span class="pill"><b>138</b> unit tests</span><span class="pill"><b>36</b> browser checks</span><span class="pill">Chromium · Brave · Edge</span><span class="pill">no server</span></div>
       <p class="k">Code</p><p style="margin-top:8px;color:#E4EBE6">${REPO}</p>`);
     mark("end"); await wait(4200);
     mark("done");

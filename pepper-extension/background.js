@@ -59,14 +59,22 @@ const Vault = (() => {
   };
 })();
 const keyHint = (k) => (k && k.length > 8 ? "…" + k.slice(-4) : "");
+/** A key belongs to one provider: switching provider without a new key drops it, so an Anthropic
+    key is never sent to OpenAI (or the other way round). */
 async function setKey(provider, apiKey) {
   const p = ["anthropic", "openai"].includes(provider) ? provider : "none";
-  if (p === "none" || !apiKey) {
-    if (p === "none") await Vault.del("apiKey");
-    return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p, ...(p === "none" ? { hasKey: false, keyHint: "" } : {}) } }, false);
+  const key = String(apiKey || "").trim();
+  if (key && p !== "none") {
+    await Vault.set("apiKey", key);
+    await Vault.set("keyProvider", p);
+    return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p, hasKey: true, keyHint: keyHint(key) } }, false);
   }
-  await Vault.set("apiKey", String(apiKey).trim());
-  return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p, hasKey: true, keyHint: keyHint(String(apiKey).trim()) } }, false);
+  const owner = await Vault.get("keyProvider").catch(() => null);
+  if (p === "none" || (owner && owner !== p)) {
+    await Vault.del("apiKey"); await Vault.del("keyProvider");
+    return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p, hasKey: false, keyHint: "" } }, false);
+  }
+  return storeOp({ op: "objPatch", key: "pepper_settings", patch: { provider: p } }, false);
 }
 /** Moves a key or file contents left in chrome.storage by earlier versions into the vault. */
 async function moveSecretsToVault() {
@@ -74,7 +82,7 @@ async function moveSecretsToVault() {
     const all = await chrome.storage.local.get(null);
     const st = all.pepper_settings;
     if (st && "apiKey" in st) {
-      if (st.apiKey) await Vault.set("apiKey", st.apiKey);
+      if (st.apiKey) { await Vault.set("apiKey", st.apiKey); await Vault.set("keyProvider", st.provider || "anthropic"); }
       const next = { ...st, hasKey: !!st.apiKey || !!st.hasKey, keyHint: st.apiKey ? keyHint(st.apiKey) : (st.keyHint || "") };
       delete next.apiKey;
       await chrome.storage.local.set({ pepper_settings: next });
@@ -108,12 +116,15 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       chrome.tabs.create({ url: chrome.runtime.getURL("onboarding.html") + (update ? "#update" : "") });
     }
   });
-  await moveSecretsToVault();
+  await moveSecretsToVault().catch(e => console.warn("Pepper: couldn't move secrets to the vault", e));
   setupMenus();
   await syncFloating();
   await syncReminders();
 });
-chrome.runtime.onStartup.addListener(async () => { await moveSecretsToVault(); await syncFloating(); await syncReminders(); });
+chrome.runtime.onStartup.addListener(async () => {
+  await moveSecretsToVault().catch(e => console.warn("Pepper: couldn't move secrets to the vault", e));
+  await syncFloating(); await syncReminders();
+});
 
 function freshData() {
   return {
@@ -247,7 +258,7 @@ async function pocketAddFile(msg, fromContent) {
     const id = C.uuid();
     const name = String(meta.name).replace(/[\\/:*?"<>|\n\r]/g, "_").slice(0, 160);
     const item = { id, kind: "file", name, mime: A.mimeFromName(name, meta.mime), size, hasBlob: true,
-      text: typeof meta.text === "string" ? meta.text.slice(0, 200000) : "", role: meta.role === "resume" ? "resume" : undefined,
+      text: typeof meta.text === "string" ? meta.text.slice(0, A.TEXT_KEEP) : "", role: meta.role === "resume" ? "resume" : undefined,
       addedAt: new Date().toISOString(), source: fromContent ? "page" : "dashboard" };
     if (item.role === "resume") list.forEach(x => { if (x.role === "resume") delete x.role; });
     await Vault.set(A.blobKey(id), data);
@@ -501,10 +512,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     case "WIPE": return reply(locked(async () => {
       const keep = msg.keepKey ? (await chrome.storage.local.get("pepper_settings")).pepper_settings : null;
       const key = keep && keep.hasKey ? await Vault.get("apiKey") : null;
+      const owner = key ? await Vault.get("keyProvider") : null;
       await chrome.storage.local.clear();
       await Vault.clear();
       const data = freshData();
-      if (key) { await Vault.set("apiKey", key); Object.assign(data.pepper_settings, { provider: keep.provider, hasKey: true, keyHint: keep.keyHint, model: keep.model }); }
+      if (key) {
+        await Vault.set("apiKey", key); await Vault.set("keyProvider", owner || keep.provider);
+        Object.assign(data.pepper_settings, { provider: keep.provider, hasKey: true, keyHint: keep.keyHint, model: keep.model });
+      }
       await chrome.storage.local.set(data);
       await chrome.alarms.clearAll();
       return { ok: true };
@@ -517,7 +532,9 @@ async function callLLM(system, user, maxTokens) {
   const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
   const provider = pepper_settings.provider;
   const apiKey = provider && provider !== "none" ? await Vault.get("apiKey").catch(() => null) : null;
-  if (!provider || provider === "none" || !apiKey) return { ok: false, error: "NO_KEY" };
+  const owner = apiKey ? await Vault.get("keyProvider").catch(() => null) : null;
+  // A key is only ever sent to the provider it was saved for.
+  if (!provider || provider === "none" || !apiKey || (owner && owner !== provider)) return { ok: false, error: "NO_KEY" };
   const model = (pepper_settings.model || "").trim() || C.DEFAULT_MODELS[provider];
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 30000);
