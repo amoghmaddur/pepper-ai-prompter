@@ -999,7 +999,7 @@
     return d;
   }
 
-  const DEFAULT_MODELS = { anthropic: "claude-sonnet-5-5", openai: "gpt-5.6-sol", gemini: "gemini-flash-latest" };
+  const DEFAULT_MODELS = { anthropic: "claude-haiku-5-5", openai: "gpt-5.6-sol", gemini: "gemini-flash-latest" };
 
   /* ---------- suggestions for the panel ---------- */
   /**

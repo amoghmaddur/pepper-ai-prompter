@@ -200,6 +200,10 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 .check input{accent-color:var(--pepper)}
 .busy .primary{position:relative;color:transparent}
 .busy .primary::after{content:"Improving your prompt…";position:absolute;color:var(--pepper-ink);font-weight:600}
+.engine.polish{animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.45}}
+.prompt.fresh{animation:fresh .9s ease-out}
+@keyframes fresh{from{box-shadow:0 0 0 3px var(--pepper)}to{box-shadow:0 0 0 0 transparent}}
 /* The Improve chip sits on the AI site's chat box: one click rewrites what you typed, in place. */
 .imp{position:absolute;display:none;align-items:center;gap:5px;height:30px;padding:0 11px 0 4px;border-radius:999px;border:1px solid var(--line);
   background:var(--surface);color:var(--ink);box-shadow:var(--shadow);font:700 12.5px/1 var(--sans);cursor:pointer;z-index:3;pointer-events:auto;white-space:nowrap}
@@ -207,7 +211,8 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 .imp .pep{width:24px;height:24px;animation:none}
 .imp:hover{border-color:var(--pepper)}
 .imp[data-mode="busy"]{cursor:progress;color:var(--muted)}
-.imp[data-mode="busy"] .pep{animation:think 1s ease-in-out infinite}
+.imp[data-mode="busy"] .pep,.imp[data-mode="polish"] .pep{animation:think 1s ease-in-out infinite}
+.imp[data-mode="polish"]{color:var(--pepper)}
 .imp[data-mode="done"]{color:var(--pepper)}
 @keyframes think{50%{transform:rotate(-10deg) scale(.92)}}
 
@@ -675,7 +680,8 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
       const raw = $("raw");
       const typed = SITE ? getInputText().trim() : "";
       if (o && o.text) { raw.value = o.text; showCompose(); }
-      else if (typed && C.collapse(typed) !== C.collapse(improvedText) && (!out || C.collapse(typed) !== C.collapse(out.raw))) { raw.value = typed; showCompose(); }
+      // What's in the box is new unless it's what Pepper just put there (the shown prompt) or what that prompt came from.
+      else if (typed && C.collapse(typed) !== C.collapse(improvedText) && (!out || (C.collapse(typed) !== C.collapse(out.raw) && !C.collapse(typed).startsWith(C.collapse(out.prompt))))) { raw.value = typed; showCompose(); }
       else if (!raw.value.trim() && typed) raw.value = typed;
     }
     if (t === "fix") renderFix(o);
@@ -811,17 +817,24 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   }
   function ctxWithPage() { const ctx = ctxNow(); const p = pageBlock(); if (p) ctx.files = [...ctx.files, p]; return ctx; }
 
-  function llm(system, user, maxTokens) {
+  function llm(system, user, maxTokens, budgetMs) {
+    const ms = budgetMs || 40000;
     return Promise.race([
-      chrome.runtime.sendMessage({ type: "LLM", system, user, maxTokens: maxTokens || 3000 }),
-      new Promise(r => setTimeout(() => r({ ok: false, error: "The model took longer than 45 seconds." }), 45000))
+      chrome.runtime.sendMessage({ type: "LLM", system, user, maxTokens: maxTokens || 3000, budgetMs: ms }),
+      new Promise(r => setTimeout(() => r({ ok: false, error: "The AI took too long to answer.", busy: true }), ms + 3000))
     ]).catch(e => ({ ok: false, error: String(e.message || e) }));
   }
+  const within = (p, ms) => Promise.race([p, new Promise(r => setTimeout(() => r(null), ms))]);
   const noAI = (r) => !r || r.error === "NO_KEY" || r.error === "NO_AI";
 
   /** The end of the chat on screen, so a follow-up like "make it shorter" can be understood. */
   function recentConversation() {
     if (!SITE) return "";
+    const replies = SITE.response ? document.querySelectorAll(SITE.response) : [];
+    if (replies.length) {
+      const last = (replies[replies.length - 1].innerText || "").replace(/\n{3,}/g, "\n\n").trim();
+      return last.length < 40 ? "" : last.slice(-2400);
+    }
     const box = (inputEl && inputEl.isConnected && inputEl.closest("main")) || document.querySelector("main") || document.body;
     let text = box ? box.innerText || "" : "";
     const typed = getInputText().trim();
@@ -837,30 +850,52 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
    * Pepper's own writer drafts the prompt instantly, on this device. The user's AI, when connected,
    * improves on that draft; if it's missing or busy, the draft is the prompt.
    */
-  async function rewrite(raw, ctx, lens) {
+  const QUICK_MS = 1200; // how long to wait for the AI before showing Pepper's own draft
+  const jobs = new Map();
+  function startRewrite(raw, ctx, lens) {
+    const key = [lens, S.activeProjectId || "", ctx.files.length, raw].join("\u0001");
+    const old = jobs.get(key);
+    if (old && Date.now() - old.at < 120000) return old;
     const conversation = recentConversation();
     const opts = { site: SITE ? SITE.name : ((A.AI_SITES.find(x => x.id === $("sendTo").value) || fav()).name), inChat: !!conversation, conversation };
     const local = C.improveLocally(raw, ctx, { lens, inChat: !!conversation });
-    const r = await llm(C.buildSystemPrompt(ctx, lens, opts), C.buildUserMessage(raw, ctx, { ...opts, draft: local.prompt }));
-    if (r && r.ok && r.text) {
-      const p = C.parseReply(r.text);
-      if (p.prompt) return { engine: "llm", model: r.model, ...p };
-    }
-    if (noAI(r) && aiState) aiState.engine = "none";
-    return { engine: "local", noAI: noAI(r), why: noAI(r) ? "" : whyNot(r), error: noAI(r) ? null : ((r && r.error) || "No reply"),
-      prompt: local.prompt, assumptions: [], status: "ok" };
+    const draft = { engine: "local", prompt: local.prompt, assumptions: [], status: "ok" };
+    const job = { key, at: Date.now(), local: draft };
+    job.final = llm(C.buildSystemPrompt(ctx, lens, opts), C.buildUserMessage(raw, ctx, { ...opts, draft: local.prompt }), 1500, 20000).then(r => {
+      if (r && r.ok && r.text) { const p = C.parseReply(r.text); if (p.prompt) return { engine: "llm", model: r.model, ...p }; }
+      jobs.delete(key); // only good answers are kept for reuse
+      if (noAI(r) && aiState) aiState.engine = "none";
+      return { ...draft, noAI: noAI(r), why: noAI(r) ? "" : whyNot(r), error: noAI(r) ? null : ((r && r.error) || "No reply") };
+    });
+    jobs.set(key, job);
+    for (const [k, j] of jobs) if (Date.now() - j.at > 120000) jobs.delete(k);
+    while (jobs.size > 6) jobs.delete(jobs.keys().next().value);
+    return job;
   }
+  const rewrite = (raw, ctx, lens) => startRewrite(raw, ctx, lens).final;
   async function runExpand() {
     const raw = $("raw").value.trim();
     if (raw.length < 2) { $("raw").focus(); return; }
     const ctx = ctxWithPage();
     const lens = currentLens;
     setBusy(true); mood("think");
-    const res = await rewrite(raw, ctx, lens);
+    const job = startRewrite(raw, ctx, lens);
+    const first = await within(job.final, QUICK_MS);
     setBusy(false); mood(null);
-    showResult({ ...res, raw, lens, lensSource, ctx, overrides: {} });
+    const base = { raw, lens, lensSource, ctx, overrides: {}, job: job.key };
+    if (first) { showResult({ ...first, ...base }); return; }
+    // The AI is still thinking: show Pepper's draft now and swap in the AI's version when it lands.
+    showResult({ ...job.local, ...base, polishing: true });
+    const fin = await job.final;
+    if (!out || out.job !== job.key) return;
+    const untouched = !out.edited && !out.editing && !out.inserted && !out.assumptions.some(a => a.state !== "open");
+    if (fin.engine === "llm" && untouched) { showResult({ ...fin, ...base }); $("prompt").classList.add("fresh"); setTimeout(() => $("prompt").classList.remove("fresh"), 900); return; }
+    Object.assign(out, { polishing: false, late: fin.engine === "llm" ? fin : null, why: fin.why, error: fin.error, noAI: fin.noAI });
+    renderResult();
   }
   $("go").onclick = runExpand;
+  // Pointing at the button starts the AI early; the click picks up the same call.
+  $("go").addEventListener("mouseenter", () => { const raw = $("raw").value.trim(); if (raw.length >= 2) startRewrite(raw, ctxWithPage(), currentLens); });
 
   function setBusy(b) {
     $("compose").classList.toggle("busy", b);
@@ -903,12 +938,16 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     renderAssumptions();
     // Shorter and Longer work everywhere (Pepper's writer redoes it); formal and casual need an AI.
     root.querySelectorAll("#tools button[data-t]").forEach(b => b.hidden = o.engine === "saved" || (o.engine === "local" && !/shorten|expand/.test(b.dataset.t)));
+    $("engine").classList.toggle("polish", !!o.polishing);
     $("engine").innerHTML =
+      o.polishing ? `Pepper's draft. ${esc(aiName())} is polishing it…` :
+      o.late ? `Pepper's draft. <button class="link" id="useLate">Use ${esc(aiName())}'s version</button>` :
       o.engine === "llm" ? `Improved by ${esc(o.model || "your AI")}.` :
       o.engine === "saved" ? "From your saved prompts." :
       o.error ? `Improved by Pepper on this device: ${esc(aiName())} ${esc(o.why || "didn't answer")}.` :
       `Improved by Pepper on this device. <button class="link" id="connectAI">Connect a free AI</button> for even sharper rewrites.`;
     const ca = root.getElementById("connectAI"); if (ca) ca.onclick = connectAI;
+    const ul = root.getElementById("useLate"); if (ul) ul.onclick = () => showResult({ ...o.late, raw: o.raw, lens: o.lens, lensSource: o.lensSource, ctx: o.ctx, overrides: {}, job: o.job });
     // On an AI site the prompt goes in this box; anywhere else it goes to the user's AI.
     $("sendRow").hidden = !!SITE;
     if (!SITE) {
@@ -1051,6 +1090,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   const insertText = () => { if (out.editing) out.prompt = $("editor").value; return C.composeInsert(out.prompt, (out.ctx || ctxNow()).files, attachFiles); };
   $("insert").onclick = async () => {
     if (!out || $("insert").disabled) return;
+    out.inserted = true;
     const text = insertText();
     if (!SITE) {
       const r = await send({ type: "HANDOFF", siteId: $("sendTo").value || fav().id, text, raw: out.raw || "", from: document.title });
@@ -1097,9 +1137,13 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     const h = A.HELPERS[kind];
     $("fixTitle").textContent = h.label;
     $("fixChanges").textContent = ""; $("fixMeta").textContent = "";
-    mood("think"); $("fixText").textContent = "Thinking…"; $("fixOut").hidden = false;
-    const r = await llm(A.helperSystem(kind, ctx), A.helperUser(text), 1500);
+    let quick = null;
+    if (kind === "fix") { const t = A.tidyText(text); quick = fixResult = { kind, text: t.text, changes: t.changes, replaceable: true, offline: true, polishing: true }; renderFixResult(); }
+    else { $("fixText").textContent = "Thinking…"; $("fixOut").hidden = false; }
+    mood("think");
+    const r = await llm(A.helperSystem(kind, ctx), A.helperUser(text), 1500, 20000);
     mood(null);
+    if (quick && fixResult !== quick) return; // moved on, or already replaced it on the page
     const none = noAI(r);
     if (r && r.ok && r.text) fixResult = { kind, text: r.text, replaceable: kind !== "similar" && kind !== "explain" };
     else if (kind === "fix") {
@@ -1129,7 +1173,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     $("fixReplace").hidden = !(r.replaceable && source.target && source.target.el && source.target.el.isConnected);
     if (r.offline) {
       const n = (r.changes || []).length;
-      $("fixMeta").textContent = n ? `${n} fix${n === 1 ? "" : "es"}, offline` : "Looks clean";
+      $("fixMeta").textContent = (n ? `${n} fix${n === 1 ? "" : "es"}` : "Looks clean") + (r.polishing ? ` · ${aiName()} is checking…` : r.noAI === false || r.noAI === undefined ? "" : ", offline");
       const wordsFixed = (r.changes || []).filter(c => c.kind === "word").map(c => `<s>${esc(c.from)}</s> ${esc(c.to)}`);
       const other = [];
       if ((r.changes || []).some(c => c.kind === "space")) other.push("spacing");
@@ -1618,7 +1662,8 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   function onType() {
     const n = getInputText().trim().length;
     orb.classList.toggle("typed", n >= (S.settings.minChars || 6) && !panel.classList.contains("show"));
-    if (chipMode === "done" && C.collapse(getInputText()) !== C.collapse(improvedText)) { undoState = null; chipState("idle"); }
+    if (writingBox) return;
+    if ((chipMode === "done" || chipMode === "polish") && C.collapse(getInputText()) !== C.collapse(improvedText)) { improveRun++; undoState = null; chipState("idle"); }
     else updateChip();
   }
 
@@ -1640,8 +1685,9 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
         && (chipMode !== "idle" || (text.length >= (S.settings.minChars || 6) && C.collapse(text) !== C.collapse(improvedText)));
       if (!want) { imp.classList.remove("show"); return; }
       imp.dataset.mode = chipMode;
-      $("impText").textContent = chipMode === "busy" ? "Improving…" : chipMode === "done" ? "Undo" : "Improve";
-      imp.title = chipMode === "done" ? "Put back what you wrote" : chipMode === "busy" ? "Pepper is rewriting your prompt" : "Improve this prompt (Alt+Enter)";
+      $("impText").textContent = chipMode === "busy" ? "Improving…" : chipMode === "done" || chipMode === "polish" ? "Undo" : "Improve";
+      imp.title = chipMode === "done" ? "Put back what you wrote" : chipMode === "polish" ? `${aiName()} is polishing Pepper's draft. Click to put back what you wrote.`
+        : chipMode === "busy" ? "Pepper is rewriting your prompt" : "Improve this prompt (Alt+Enter)";
       imp.classList.add("show");
       const r = el.getBoundingClientRect(), host = hostEl.getBoundingClientRect();
       const w = imp.offsetWidth || 100, h = imp.offsetHeight || 30;
@@ -1653,41 +1699,73 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     });
   }
   imp.addEventListener("mousedown", (e) => e.preventDefault()); // keep the cursor in the chat box
-  imp.onclick = () => { if (chipMode === "done") undoImprove(); else if (chipMode === "idle") improveInPlace(); };
+  imp.onclick = () => { if (chipMode === "done" || chipMode === "polish") undoImprove(); else if (chipMode === "idle") improveInPlace(); };
+  imp.addEventListener("mouseenter", prefetch); // the AI starts while the pointer is on its way to the click
   addEventListener("resize", updateChip);
   addEventListener("scroll", () => { if (imp.classList.contains("show")) updateChip(); }, { passive: true, capture: true });
 
+  /** Rewrites what's in the chat box and puts it back in the box. The user still presses send. */
+  let improveRun = 0, writingBox = false;
+  /** Puts a rewrite in the chat box and remembers how to undo it. */
+  async function putInBox(res, raw, ctx, lens, job) {
+    showResult({ ...res, raw, lens, lensSource, ctx, overrides: {}, job }); // the panel shows it, with anything to confirm
+    const text = C.composeInsert(out.prompt, ctx.files, true);
+    writingBox = true;
+    const r = await insertIntoSite(text);
+    writingBox = false;
+    if (!r.ok) { chipState("idle"); toast(r.method === "clipboard" ? "I couldn't write into the box, so the better prompt is copied. Paste it in." : "I couldn't reach the box. Open Pepper to copy the prompt."); return false; }
+    lastInsert = { insertedAt: Date.now(), insertedText: text, raw, lens, lensSource, projectId: S.activeProjectId, projectType: ctx.projectType, engine: res.engine };
+    improvedText = getInputText();
+    undoState = { before: raw };
+    return true;
+  }
+  function afterImprove(res) {
+    const n = out ? out.assumptions.length : 0;
+    if (res.engine === "local" && res.why) toast(`${aiName()} ${res.why}, so I improved it myself.`);
+    else if (n) toast(`Improved. I wasn't sure about ${n} detail${n === 1 ? "" : "s"}; click me to add ${n === 1 ? "it" : "them"}.`);
+  }
   /** Rewrites what's in the chat box and puts it back in the box. The user still presses send. */
   async function improveInPlace() {
     if (improving || !SITE || !ready() || S.settings.enabled === false) return;
     const raw = getInputText().trim();
     if (raw.length < 2) { toast("Type what you want first, then I'll improve it."); return; }
+    const run = ++improveRun;
     improving = true; chipState("busy"); mood("think");
     pickLearnedLens();
     const ctx = ctxNow(), lens = currentLens;
-    const res = await rewrite(raw, ctx, lens);
+    const job = startRewrite(raw, ctx, lens);
+    const first = await within(job.final, QUICK_MS);
     mood(null);
     // Still typing while Pepper worked: never throw the newer words away.
     if (getInputText().trim() !== raw) { improving = false; chipState("idle"); toast("You kept typing, so I left your text alone. Click Improve again."); return; }
-    showResult({ ...res, raw, lens, lensSource, ctx, overrides: {} }); // the panel shows it, with anything to confirm
-    const text = C.composeInsert(out.prompt, ctx.files, true);
-    const r = await insertIntoSite(text);
+    const ok = await putInBox(first || job.local, raw, ctx, lens, job.key);
     improving = false;
-    if (!r.ok) { chipState("idle"); toast(r.method === "clipboard" ? "I couldn't write into the box, so the better prompt is copied. Paste it in." : "I couldn't reach the box. Open Pepper to copy the prompt."); return; }
-    lastInsert = { insertedAt: Date.now(), insertedText: text, raw, lens, lensSource, projectId: S.activeProjectId, projectType: ctx.projectType, engine: res.engine };
-    improvedText = getInputText();
-    undoState = { before: raw };
-    chipState("done");
+    if (!ok) return;
     mood("happy", 1400);
-    const n = out.assumptions.length;
-    if (res.engine === "local" && res.why) toast(`${aiName()} ${res.why}, so I improved it myself.`);
-    else if (n) toast(`Improved. I wasn't sure about ${n} detail${n === 1 ? "" : "s"}; click me to add ${n === 1 ? "it" : "them"}.`);
+    if (first) { chipState("done"); afterImprove(first); return; }
+    // Pepper's draft is in the box. The AI's version replaces it when it lands, unless the box changed.
+    chipState("polish");
+    const fin = await job.final;
+    if (run !== improveRun || chipMode !== "polish") return; // undone, edited or improved again meanwhile
+    if (fin.engine === "llm" && C.collapse(getInputText()) === C.collapse(improvedText)) { if (await putInBox(fin, raw, ctx, lens, job.key)) mood("happy", 1000); }
+    chipState("done");
+    afterImprove(fin);
+  }
+  function prefetch() {
+    if (!SITE || !ready() || chipMode !== "idle") return;
+    const raw = getInputText().trim();
+    if (raw.length < (S.settings.minChars || 6) || C.collapse(raw) === C.collapse(improvedText)) return;
+    pickLearnedLens();
+    startRewrite(raw, ctxNow(), currentLens);
   }
   async function undoImprove() {
+    improveRun++;
     if (!undoState) return chipState("idle");
     const before = undoState.before;
     undoState = null; lastInsert = null; improvedText = "";
+    writingBox = true;
     const r = await insertIntoSite(before);
+    writingBox = false;
     chipState("idle");
     toast(r.ok ? "Back to what you wrote." : "Couldn't put it back. Press Ctrl+Z in the box.");
   }
@@ -1701,6 +1779,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   /* ---------------- send detection + reply capture (AI sites only) ---------------- */
   let lastSend = null, pending = null;
   function onKeyDownCapture(e) {
+    if (e.key === "Alt" && inputEl && (e.target === inputEl || inputEl.contains(e.target))) prefetch(); // Alt+Enter is coming
     if (e.key === "Enter" && e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && inputEl && (e.target === inputEl || inputEl.contains(e.target)) && ready() && S.settings.improveButton !== false) {
       e.preventDefault(); e.stopPropagation(); improveInPlace(); return;
     }
@@ -1888,6 +1967,8 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     applyEnabled();
     claimHandoff();
     setTimeout(nudges, 1500);
+    // Builds the writer's word list while the page is idle, so the first Improve is instant.
+    if (SITE) setTimeout(() => { try { C.offlinePrompt("warm up pepper", ctxNow()); } catch (e) { /* not needed */ } }, 2500);
     chrome.storage.onChanged.addListener((ch, area) => {
       if (area !== "local") return;
       for (const [k, v] of Object.entries(KEYMAP)) if (ch[k]) S[v] = ch[k].newValue ?? (v === "activeProjectId" ? null : S[v]);

@@ -496,7 +496,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   switch (msg.type) {
     case "OPEN_PAGE": openPage(msg.page, msg.hash); sendResponse({ ok: true }); return;
-    case "LLM": return reply(callLLM(msg.system, msg.user, msg.maxTokens || 3000));
+    case "LLM": return reply(callLLM(msg.system, msg.user, msg.maxTokens || 3000, msg.budgetMs));
     case "AI_STATUS": return reply(aiStatus());
     case "STORE": return reply(storeOp(msg.op || {}, fromContent));
     case "POCKET_ADD_FILE": return reply(pocketAddFile(msg, fromContent));
@@ -561,6 +561,12 @@ async function aiStatus() {
 const RETRYABLE = (st) => st === 408 || st === 429 || st === 500 || st === 502 || st === 503 || st === 504 || st === 529;
 const GEMINI_FALLBACKS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
 const pause = (ms) => new Promise(r => setTimeout(r, ms));
+// Speed: a prompt rewrite doesn't need a model to "think" first, which is most of the wait. Models differ in
+// how that's switched off, so each way is tried once and the one that works is remembered for this session.
+const THINK_OFF = [{ thinkingBudget: 0 }, { thinkingLevel: "minimal" }, { thinkingLevel: "low" }, null];
+const thinkFor = new Map();   // model -> index into THINK_OFF that it accepted
+const busyUntil = new Map();  // model -> time until which it's skipped, after it said it was busy
+const OPENAI_FAST = new Map(); // model -> false once it refused reasoning_effort
 
 async function callProvider(provider, model, apiKey, system, user, maxTokens, signal) {
   let res, data;
@@ -580,20 +586,33 @@ async function callProvider(provider, model, apiKey, system, user, maxTokens, si
       method: "POST", signal,
       headers: { "content-type": "application/json", "authorization": "Bearer " + apiKey },
       body: JSON.stringify({ model, max_completion_tokens: Math.max(maxTokens, 4000),
+        ...(OPENAI_FAST.get(model) === false ? {} : { reasoning_effort: "low" }),
         messages: [{ role: "system", content: system }, { role: "user", content: user }] })
     });
     data = await res.json().catch(() => ({}));
+    if (res.status === 400 && OPENAI_FAST.get(model) !== false && /reasoning/i.test((data.error && data.error.message) || "")) {
+      OPENAI_FAST.set(model, false);
+      return callProvider(provider, model, apiKey, system, user, maxTokens, signal);
+    }
     if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
     return { ok: true, model, text: ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "").trim() };
   }
   if (provider === "gemini") {
+    const ti = thinkFor.has(model) ? thinkFor.get(model) : 0;
+    const think = THINK_OFF[ti];
     res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST", signal,
       headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }],
-        generationConfig: { maxOutputTokens: Math.max(maxTokens, 8192) } })
+        generationConfig: { maxOutputTokens: think ? Math.max(maxTokens, 2048) : Math.max(maxTokens, 8192), temperature: 0.4, ...(think ? { thinkingConfig: think } : {}) } })
     });
     data = await res.json().catch(() => ({}));
+    // This model won't take that way of turning thinking off: try the next way.
+    if (res.status === 400 && think && /think/i.test((data.error && data.error.message) || "")) {
+      thinkFor.set(model, ti + 1);
+      return callProvider(provider, model, apiKey, system, user, maxTokens, signal);
+    }
+    if (res.ok) thinkFor.set(model, ti);
     if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
     const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
     const text = parts.filter(x => !x.thought).map(x => x.text || "").join("").trim();
@@ -602,7 +621,7 @@ async function callProvider(provider, model, apiKey, system, user, maxTokens, si
   return { ok: false, error: "Unknown provider" };
 }
 
-async function callLLM(system, user, maxTokens) {
+async function callLLM(system, user, maxTokens, budgetMs) {
   const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
   const provider = pepper_settings.provider;
   const keyed = KEY_PROVIDERS.includes(provider);
@@ -617,8 +636,11 @@ async function callLLM(system, user, maxTokens) {
   // writes the prompt when it's on this computer; otherwise the page uses Pepper's own writer.
   if (!keyed || !apiKey || (owner && owner !== provider)) return builtin({ ok: false, error: keyed ? "NO_KEY" : "NO_AI" });
   const chosen = (pepper_settings.model || "").trim().replace(/^models\//, "") || C.DEFAULT_MODELS[provider];
-  const models = provider === "gemini" ? [...new Set([chosen, ...GEMINI_FALLBACKS])] : [chosen];
-  const deadline = Date.now() + 40000;
+  const all = provider === "gemini" ? [...new Set([chosen, ...GEMINI_FALLBACKS])] : [chosen];
+  // A model that said it was busy a moment ago is tried last, so the next one gets the first, fast try.
+  const now = Date.now();
+  const models = [...all.filter(m => !(busyUntil.get(m) > now)), ...all.filter(m => busyUntil.get(m) > now)];
+  const deadline = Date.now() + Math.max(5000, Math.min(budgetMs || 40000, 40000));
   let last = { ok: false, error: "No reply" };
   for (let i = 0; i < models.length && Date.now() < deadline - 2000; i++) {
     // The chosen model gets one quick retry when it's busy; fallbacks get one try each.
@@ -628,9 +650,11 @@ async function callLLM(system, user, maxTokens) {
       try { last = await callProvider(provider, models[i], apiKey, system, user, maxTokens, ctrl.signal); }
       catch (e) { last = { ok: false, error: e.name === "AbortError" ? "The model took too long to answer." : "Couldn't reach the provider: " + (e.message || String(e)), status: e.name === "AbortError" ? 408 : 0 }; }
       finally { clearTimeout(timer); }
-      if (last.ok) return last;
+      if (last.ok) { busyUntil.delete(models[i]); return last; }
+      if (RETRYABLE(last.status)) busyUntil.set(models[i], Date.now() + 5 * 60000);
       if (!RETRYABLE(last.status) && last.status !== 0) break; // a wrong key or a bad request won't fix itself
-      if (attempt === 0 && i === 0) await pause(700);
+      if (models.length > 1) break; // other models are waiting: move on rather than retry this one
+      if (attempt === 0) await pause(300);
     }
     if (last.status && !RETRYABLE(last.status) && last.status !== 404) break; // a missing model moves on to the next one
   }

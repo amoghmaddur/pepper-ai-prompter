@@ -100,11 +100,12 @@ test("real build", { timeout: 120000 }, async (t) => {
 
 /* ---------------- open-root copy: drive the panel ---------------- */
 test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
-  let apiCalls = [];
+  let apiCalls = [], apiDelay = 0;
   let apiReply = "ROLE\nYou are a career coach.\n\nCONTEXT\nI'm a graduate student in software.\n\nTASK\nWrite a cover letter for the Stripe new-grad SWE role.\n\nCONSTRAINTS\n- Professional tone.\n\nOUTPUT FORMAT\nThree paragraphs.\n\nSUCCESS CRITERIA\n- A recruiter sees the fit fast.\n===ASSUMPTIONS===\n- I am applying for roles in the United States.\n- I graduate in May 2027.";
   const { ctx, storage, sw, extId } = await launch({ open: true, onApi: async (route) => {
     const body = JSON.parse(route.request().postData() || "{}");
     apiCalls.push({ url: route.request().url(), headers: route.request().headers(), body });
+    if (apiDelay) await new Promise(r => setTimeout(r, apiDelay));
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ content: [{ type: "text", text: apiReply }] }) });
   } });
   const P = (p, sel) => p.locator("#pepper-host").locator(sel);
@@ -269,6 +270,24 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       await P(gpt, "#close").click();
       await gpt.evaluate(() => { document.getElementById("prompt-textarea").innerHTML = ""; });
       await storage.set({ pepper_active_project: "p1" });
+    });
+
+    await t.test("A slow AI: Pepper's own draft goes in the box at once, then the AI's version replaces it", async () => {
+      apiDelay = 2500;
+      apiReply = "Polished by the AI: plan me a 3-day budget trip to Goa.\n===ASSUMPTIONS===\n- none";
+      const box = gpt.locator("#prompt-textarea");
+      await gpt.evaluate(() => { document.getElementById("prompt-textarea").innerHTML = ""; });
+      await box.click(); await gpt.keyboard.type("goa trip 3 days cheap");
+      await P(gpt, "#imp").waitFor({ state: "visible", timeout: 3000 });
+      const t0 = Date.now();
+      await P(gpt, "#imp").click();
+      await until(async () => /Plan a 3-day trip to Goa on a tight budget\./.test(await box.innerText()), 2400);
+      assert.ok(Date.now() - t0 < 2400, `Pepper's draft is in before the AI answers (${Date.now() - t0} ms)`);
+      assert.equal(await P(gpt, "#imp").getAttribute("data-mode"), "polish");
+      await until(async () => /^Polished by the AI/.test(await box.innerText()), 8000);
+      await until(async () => (await P(gpt, "#imp").getAttribute("data-mode")) === "done", 2000);
+      apiDelay = 0;
+      await gpt.evaluate(() => { document.getElementById("prompt-textarea").innerHTML = ""; });
     });
 
     await t.test("M7 learned lens is preselected with the reason shown", async () => {

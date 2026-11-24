@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Pepper — The Personal AI Prompter",
   "short_name": "Pepper",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "A floating helper that turns rough requests into clear prompts, fixes your writing, fills job forms and keeps your files handy. Your data stays in this browser.",
   "minimum_chrome_version": "116",
   "permissions": ["storage", "unlimitedStorage", "scripting", "activeTab", "contextMenus", "alarms", "offscreen"],
