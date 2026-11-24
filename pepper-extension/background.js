@@ -1,7 +1,7 @@
 /* ==========================================================================
    Pepper — The Personal AI Prompter · background worker (v0.4)
-   - The only module with network access, limited to the three provider hosts,
-     plus Chrome's built-in on-device AI when there's no key.
+   - The only module with network access: the three key providers, the free AI used by
+     Automatic mode, and Chrome's built-in on-device AI.
    - The only module that reads the vault (API key, file contents).
    - Every list write from every tab goes through one serialized queue, so two
      tabs never overwrite each other; consent is re-checked before any record
@@ -64,7 +64,7 @@ const keyHint = (k) => (k && k.length > 8 ? "…" + k.slice(-4) : "");
     key is never sent to OpenAI (or the other way round). */
 const KEY_PROVIDERS = ["anthropic", "openai", "gemini"];
 async function setKey(provider, apiKey) {
-  const p = KEY_PROVIDERS.includes(provider) || provider === "chrome" ? provider : "none";
+  const p = KEY_PROVIDERS.includes(provider) || ["chrome", "auto", "none"].includes(provider) ? provider : "auto";
   const key = String(apiKey || "").trim();
   if (key && KEY_PROVIDERS.includes(p)) {
     await Vault.set("apiKey", key);
@@ -111,6 +111,12 @@ chrome.runtime.onInstalled.addListener(async (details) => {
         if (!("pepper_files" in m.data) && "pepper_files" in cur) await chrome.storage.local.remove("pepper_files");
       }
       data = m.data;
+      // v0.5.2: an AI is on by default. Anyone left on "no AI" by earlier setups moves to Automatic, once.
+      const st = data.pepper_settings || {};
+      if (!st.aiDefaulted && (!st.provider || st.provider === "none")) {
+        data.pepper_settings = { ...st, provider: "auto", aiDefaulted: true };
+        await chrome.storage.local.set({ pepper_settings: data.pepper_settings });
+      }
     }
     await recomputeLearning();
     const update = details.reason === "update";
@@ -130,7 +136,7 @@ chrome.runtime.onStartup.addListener(async () => {
 
 function freshData() {
   return {
-    pepper_settings: { enabled: true, minChars: 6, provider: "none", hasKey: false, keyHint: "", model: "", onboarded: false,
+    pepper_settings: { enabled: true, minChars: 6, provider: "auto", aiDefaulted: true, hasKey: false, keyHint: "", model: "", onboarded: false,
       floating: null, features: A.defaultFeatures(), selectionButton: true },
     pepper_memories: DEFAULT_MEMORIES.map(m => ({ ...m })), pepper_history: [], pepper_profile: { answers: {}, completed: false },
     pepper_pocket: [], pepper_details: {}, pepper_reminders: [], pepper_projects: [], pepper_saved_prompts: [],
@@ -551,22 +557,20 @@ const callBuiltin = (system, user) => self.LanguageModel ? LocalAI.run(system, u
 /** Which AI writes prompts right now: "key" (the user's provider), "builtin", or "none". */
 async function aiStatus() {
   const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
-  const keyed = KEY_PROVIDERS.includes(pepper_settings.provider) && !!pepper_settings.hasKey;
+  const provider = pepper_settings.provider || "auto";
+  const keyed = KEY_PROVIDERS.includes(provider) && !!pepper_settings.hasKey;
+  if (provider === "none") return { ok: true, provider, engine: "none", builtin: "skipped" };
   const builtin = keyed ? "skipped" : await builtinStatus();
-  return { ok: true, provider: pepper_settings.provider || "none", engine: keyed ? "key" : builtin === "available" ? "builtin" : "none", builtin };
+  const engine = keyed ? "key" : builtin === "available" ? "builtin" : provider === "auto" ? "free" : "none";
+  return { ok: true, provider, engine, builtin };
 }
 
-/* ---------- model call (exactly three hosts; key never logged or returned) ---------- */
-// Busy or overloaded answers are worth another try; Gemini also has lighter models to fall back on.
+/* ---------- model calls (four hosts; a key is never logged or returned) ---------- */
+// Busy or overloaded answers are worth another try; Gemini also has other models to fall back on, best first.
 const RETRYABLE = (st) => st === 408 || st === 429 || st === 500 || st === 502 || st === 503 || st === 504 || st === 529;
-const GEMINI_FALLBACKS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"];
+const GEMINI_FALLBACKS = ["gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"];
 const pause = (ms) => new Promise(r => setTimeout(r, ms));
-// Speed: a prompt rewrite doesn't need a model to "think" first, which is most of the wait. Models differ in
-// how that's switched off, so each way is tried once and the one that works is remembered for this session.
-const THINK_OFF = [{ thinkingBudget: 0 }, { thinkingLevel: "minimal" }, { thinkingLevel: "low" }, null];
-const thinkFor = new Map();   // model -> index into THINK_OFF that it accepted
-const busyUntil = new Map();  // model -> time until which it's skipped, after it said it was busy
-const OPENAI_FAST = new Map(); // model -> false once it refused reasoning_effort
+const busyUntil = new Map(); // model -> time until which it's tried last, after it said it was busy
 
 async function callProvider(provider, model, apiKey, system, user, maxTokens, signal) {
   let res, data;
@@ -586,33 +590,21 @@ async function callProvider(provider, model, apiKey, system, user, maxTokens, si
       method: "POST", signal,
       headers: { "content-type": "application/json", "authorization": "Bearer " + apiKey },
       body: JSON.stringify({ model, max_completion_tokens: Math.max(maxTokens, 4000),
-        ...(OPENAI_FAST.get(model) === false ? {} : { reasoning_effort: "low" }),
         messages: [{ role: "system", content: system }, { role: "user", content: user }] })
     });
     data = await res.json().catch(() => ({}));
-    if (res.status === 400 && OPENAI_FAST.get(model) !== false && /reasoning/i.test((data.error && data.error.message) || "")) {
-      OPENAI_FAST.set(model, false);
-      return callProvider(provider, model, apiKey, system, user, maxTokens, signal);
-    }
     if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
     return { ok: true, model, text: ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "").trim() };
   }
   if (provider === "gemini") {
-    const ti = thinkFor.has(model) ? thinkFor.get(model) : 0;
-    const think = THINK_OFF[ti];
+    // The model thinks as long as it likes: that thinking is what makes the rewrite smart.
     res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
       method: "POST", signal,
       headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({ systemInstruction: { parts: [{ text: system }] }, contents: [{ role: "user", parts: [{ text: user }] }],
-        generationConfig: { maxOutputTokens: think ? Math.max(maxTokens, 2048) : Math.max(maxTokens, 8192), temperature: 0.4, ...(think ? { thinkingConfig: think } : {}) } })
+        generationConfig: { maxOutputTokens: Math.max(maxTokens, 8192) } })
     });
     data = await res.json().catch(() => ({}));
-    // This model won't take that way of turning thinking off: try the next way.
-    if (res.status === 400 && think && /think/i.test((data.error && data.error.message) || "")) {
-      thinkFor.set(model, ti + 1);
-      return callProvider(provider, model, apiKey, system, user, maxTokens, signal);
-    }
-    if (res.ok) thinkFor.set(model, ti);
     if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status };
     const parts = (data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts) || [];
     const text = parts.filter(x => !x.thought).map(x => x.text || "").join("").trim();
@@ -621,44 +613,89 @@ async function callProvider(provider, model, apiKey, system, user, maxTokens, si
   return { ok: false, error: "Unknown provider" };
 }
 
-async function callLLM(system, user, maxTokens, budgetMs) {
-  const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
-  const provider = pepper_settings.provider;
-  const keyed = KEY_PROVIDERS.includes(provider);
-  const apiKey = keyed ? await Vault.get("apiKey").catch(() => null) : null;
-  const owner = apiKey ? await Vault.get("keyProvider").catch(() => null) : null;
-  const builtin = async (fallbackError) => {
-    if (pepper_settings.builtin === false) return fallbackError;
-    const r = await callBuiltin(system, user);
-    return r.ok || r.error !== "NO_AI" ? r : fallbackError;
-  };
-  // A key is only ever sent to the provider it was saved for. Without one, Chrome's built-in AI
-  // writes the prompt when it's on this computer; otherwise the page uses Pepper's own writer.
-  if (!keyed || !apiKey || (owner && owner !== provider)) return builtin({ ok: false, error: keyed ? "NO_KEY" : "NO_AI" });
-  const chosen = (pepper_settings.model || "").trim().replace(/^models\//, "") || C.DEFAULT_MODELS[provider];
-  const all = provider === "gemini" ? [...new Set([chosen, ...GEMINI_FALLBACKS])] : [chosen];
-  // A model that said it was busy a moment ago is tried last, so the next one gets the first, fast try.
+/** The user's own provider: the chosen model gets one retry when busy, then Gemini's other models, best first. */
+async function callKeyed(provider, apiKey, model, system, user, maxTokens, deadline) {
+  const all = provider === "gemini" ? [...new Set([model, ...GEMINI_FALLBACKS])] : [model];
   const now = Date.now();
   const models = [...all.filter(m => !(busyUntil.get(m) > now)), ...all.filter(m => busyUntil.get(m) > now)];
-  const deadline = Date.now() + Math.max(5000, Math.min(budgetMs || 40000, 40000));
   let last = { ok: false, error: "No reply" };
   for (let i = 0; i < models.length && Date.now() < deadline - 2000; i++) {
-    // The chosen model gets one quick retry when it's busy; fallbacks get one try each.
     for (let attempt = 0; attempt < (i === 0 ? 2 : 1) && Date.now() < deadline - 2000; attempt++) {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), Math.min(25000, deadline - Date.now()));
+      const timer = setTimeout(() => ctrl.abort(), Math.min(30000, deadline - Date.now()));
       try { last = await callProvider(provider, models[i], apiKey, system, user, maxTokens, ctrl.signal); }
       catch (e) { last = { ok: false, error: e.name === "AbortError" ? "The model took too long to answer." : "Couldn't reach the provider: " + (e.message || String(e)), status: e.name === "AbortError" ? 408 : 0 }; }
       finally { clearTimeout(timer); }
       if (last.ok) { busyUntil.delete(models[i]); return last; }
-      if (RETRYABLE(last.status)) busyUntil.set(models[i], Date.now() + 5 * 60000);
+      if (RETRYABLE(last.status)) busyUntil.set(models[i], Date.now() + 60000);
       if (!RETRYABLE(last.status) && last.status !== 0) break; // a wrong key or a bad request won't fix itself
-      if (models.length > 1) break; // other models are waiting: move on rather than retry this one
-      if (attempt === 0) await pause(300);
+      if (attempt === 0) await pause(600);
     }
     if (last.status && !RETRYABLE(last.status) && last.status !== 404) break; // a missing model moves on to the next one
   }
-  // Still nothing: Chrome's own AI, if this computer has it; else the error, and Pepper's own writer takes over.
-  const r = await builtin(null);
-  return r && r.ok ? r : { ...last, busy: RETRYABLE(last.status) };
+  return { ...last, busy: RETRYABLE(last.status), via: provider };
+}
+
+/* The free AI for Automatic mode: no key, no account (Pollinations' anonymous tier, one answer every
+   45 seconds per connection). Attached file text is never sent to it, and requests are marked private. */
+let freeUntil = 0;
+const FREE_LIMIT = "The free AI allows one answer every 45 seconds.";
+const withoutFiles = (user) => String(user).replace(/<file name="([^"]*)">[\s\S]*?<\/file>/g, '<file name="$1">(file text isn\'t shared with the free AI)</file>');
+async function callFree(system, user, deadline) {
+  if (Date.now() < freeUntil) return { ok: false, error: FREE_LIMIT, status: 429, busy: true, via: "free" };
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), Math.max(3000, Math.min(30000, deadline - Date.now())));
+  try {
+    const res = await fetch("https://text.pollinations.ai/openai", {
+      method: "POST", signal: ctrl.signal, headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "openai-fast", private: true, messages: [{ role: "system", content: system }, { role: "user", content: withoutFiles(user) }] })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 402 || res.status === 429) {
+      const wait = +((String((data.error && data.error.message) || "").match(/after\s+(\d+)\s*s/i) || [])[1]) || 45;
+      freeUntil = Date.now() + wait * 1000;
+      return { ok: false, error: FREE_LIMIT, status: 429, busy: true, via: "free" };
+    }
+    if (!res.ok) return { ok: false, error: (data.error && data.error.message) || ("HTTP " + res.status), status: res.status, busy: RETRYABLE(res.status), via: "free" };
+    freeUntil = Date.now() + 45000; // its limit: the next ask within 45 s goes straight to Pepper's own writer
+    const text = ((data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || "").trim();
+    return text ? { ok: true, model: "the free AI", text, via: "free" } : { ok: false, error: "The free AI sent back an empty answer.", status: 503, busy: true, via: "free" };
+  } catch (e) {
+    return { ok: false, error: e.name === "AbortError" ? "The free AI took too long to answer." : "Couldn't reach the free AI.", status: 408, busy: true, via: "free" };
+  } finally { clearTimeout(timer); }
+}
+
+/**
+ * Which AI answers: "auto" (the default) uses Chrome's on-device AI when this computer has it, else the
+ * free AI; a chosen provider uses the user's key (a key only ever goes to the provider it was saved for),
+ * falling back only to the on-device AI, never to the free one; "none" means Pepper's own writer only.
+ */
+async function callLLM(system, user, maxTokens, budgetMs) {
+  const { pepper_settings = {} } = await chrome.storage.local.get("pepper_settings");
+  const provider = pepper_settings.provider || "auto";
+  if (provider === "none") return { ok: false, error: "NO_AI" };
+  const deadline = Date.now() + Math.max(5000, Math.min(budgetMs || 40000, 45000));
+  const onDevice = async () => {
+    if (pepper_settings.builtin === false) return null;
+    const r = await callBuiltin(system, user);
+    return r.ok || r.error !== "NO_AI" ? r : null;
+  };
+  let last = null;
+  if (KEY_PROVIDERS.includes(provider)) {
+    const apiKey = await Vault.get("apiKey").catch(() => null);
+    const owner = apiKey ? await Vault.get("keyProvider").catch(() => null) : null;
+    if (apiKey && (!owner || owner === provider)) {
+      const model = (pepper_settings.model || "").trim().replace(/^models\//, "") || C.DEFAULT_MODELS[provider];
+      last = await callKeyed(provider, apiKey, model, system, user, maxTokens, deadline);
+      if (last.ok) return last;
+    }
+  }
+  const b = await onDevice();
+  if (b && b.ok) return b;
+  if (provider === "auto") {
+    const f = await callFree(system, user, deadline);
+    if (f.ok) return f;
+    last = last || f;
+  }
+  return last || (b && !b.ok ? b : { ok: false, error: KEY_PROVIDERS.includes(provider) ? "NO_KEY" : "NO_AI" });
 }

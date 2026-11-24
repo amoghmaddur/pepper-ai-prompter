@@ -6,7 +6,7 @@ Version 0.4.0. Last updated 2026-11-22.
 
 ## The short version
 
-Pepper keeps everything in your own browser. There is no Pepper server, no account, no analytics and no tracking. The only time anything leaves your browser is when you have added your own model key: then the text Pepper needs goes to the provider you chose (Google Gemini, Anthropic or OpenAI), and nowhere else. If you choose Chrome's built-in AI instead, it runs on your computer and nothing leaves it.
+Pepper keeps everything in your own browser. There is no Pepper server, no account, no analytics and no tracking. The only time anything leaves your browser is when you have added your own model key: then the text Pepper needs goes to the provider you chose (Google Gemini, Anthropic or OpenAI), and nowhere else. If you choose Chrome's built-in AI instead, it runs on your computer and nothing leaves it. Out of the box Pepper is set to **Automatic**: it uses Chrome's built-in AI when your computer has it, and otherwise a free AI service, Pollinations (`text.pollinations.ai`), with no key or account. To that service Pepper sends what you asked it to improve, the relevant parts of your profile and the end of the chat on screen, marked private; the text of your files is never sent to it. Pick another AI, or none, under Settings → AI.
 
 Pepper saves the prompts you send, the replies and your ratings only on AI sites where you have turned learning on. Learning is off until you turn it on.
 
@@ -108,6 +108,7 @@ Under **History → What Pepper learned** you can see what Pepper concluded and 
 - **Notifications (asked only when you turn on reminders).**
 - **Access to all sites (asked only when you choose "Keep floating everywhere").**
 - **Offscreen document:** to run Chrome's built-in AI when you choose it.
+- **text.pollinations.ai:** the free AI used by Automatic mode when Chrome's built-in AI isn't available.
 - **generativelanguage.googleapis.com, api.anthropic.com and api.openai.com:** to reach your model provider when you add a key.
 
 ## Uninstalling

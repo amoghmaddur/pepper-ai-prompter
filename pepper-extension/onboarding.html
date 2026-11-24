@@ -89,17 +89,6 @@
     </div>
   </section>
 
-  <section class="step" data-step="key" hidden>
-    <h1>Give me an AI to think with</h1>
-    <p class="lede">An AI is what turns your rough, vague prompts into clear ones. Chrome's own AI and Google Gemini are free. Without one, I ask the chat's AI to work out what you mean first.</p>
-    <div class="keygrid">
-      <label class="field"><span>AI</span><select id="provider"></select></label>
-      <label class="field" id="keyField"><span>API key</span><input type="password" id="key" autocomplete="off" spellcheck="false" placeholder="Paste your key"><small id="keyHelp"></small></label>
-    </div>
-    <div class="row"><button class="btn" type="button" id="testKey">Save and test</button><span class="small" id="keyNote" aria-live="polite"></span></div>
-    <p class="why" id="keyWhy"></p>
-  </section>
-
   <section class="step" data-step="done" hidden>
     <h1 id="doneTitle">You're all set!</h1>
     <p class="lede" id="doneLede"></p>
@@ -122,7 +111,6 @@
 <script src="lib/core.js"></script>
 <script src="lib/assist.js"></script>
 <script src="lib/local-ai.js"></script>
-<script src="lib/ai-connect.js"></script>
 <script src="onboarding.js"></script>
 </body>
 </html>

@@ -31,7 +31,7 @@ async function load() {
 const answers = () => D.profile.answers || {};
 // The key itself is in the worker's vault; pages only know whether one is saved, and its last four characters.
 const hasKey = () => D.settings.provider !== "none" && !!D.settings.hasKey;
-const aiOn = () => hasKey() || D.settings.provider === "chrome";
+const aiOn = () => hasKey() || D.settings.provider === "chrome" || D.settings.provider === "auto";
 const AI = self.PepperAIConnect;
 const keyedAI = (p) => A.PROVIDERS.some(x => x.id === p && x.keyed);
 const consentCount = () => C.SITES.filter(s => D.consent[s.id] && D.consent[s.id].learning).length;
@@ -629,10 +629,11 @@ function syncModelHelp() {
   $("sModel").placeholder = def || "";
   $("sModel").disabled = $("sKey").disabled = !keyedAI(p);
   $("sKeyField").hidden = $("sModelField").hidden = !keyedAI(p);
-  $("testKey").disabled = p === "none";
+  $("testKey").disabled = p === "none" || p === "auto";
   $("testKey").textContent = p === "chrome" ? "Turn it on" : "Test connection";
   $("modelHelp").textContent = def ? `Leave blank to use ${def}. Check your provider's model list if it fails.` : "";
-  $("providerHelp").innerHTML = p === "chrome" ? "Runs on this computer, so nothing you type leaves it. Needs a recent Chrome on a capable computer."
+  $("providerHelp").innerHTML = p === "auto" ? "Uses Chrome's built-in AI when this computer has it, otherwise a free AI service (Pollinations; one answer every 45 seconds, and your files' text is never sent to it). Add your own key for unlimited, sharper rewrites."
+    : p === "chrome" ? "Runs on this computer, so nothing you type leaves it. Needs a recent Chrome on a capable computer."
     : p === "none" ? "Without an AI, Pepper asks the chat's own AI to work out what you mean before it answers." : AI.helpHtml(p);
 }
 $("sProvider").onchange = syncModelHelp;

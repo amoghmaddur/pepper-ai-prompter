@@ -360,7 +360,7 @@ test("N8 manifest: exactly the v0.5 permissions, all-sites and notifications onl
   assert.deepEqual([...m.permissions].sort(), ["activeTab", "alarms", "contextMenus", "offscreen", "scripting", "storage", "unlimitedStorage"]);
   assert.deepEqual(m.optional_permissions, ["notifications"]);
   assert.deepEqual(m.optional_host_permissions, ["<all_urls>"], "every-site access is requested only when the user picks Keep floating");
-  assert.deepEqual([...m.host_permissions].sort(), ["https://api.anthropic.com/*", "https://api.openai.com/*", "https://generativelanguage.googleapis.com/*"]);
+  assert.deepEqual([...m.host_permissions].sort(), ["https://api.anthropic.com/*", "https://api.openai.com/*", "https://generativelanguage.googleapis.com/*", "https://text.pollinations.ai/*"]);
   assert.deepEqual(m.content_scripts[0].js, ["lib/core.js", "lib/assist.js", "content.js"]);
   assert.deepEqual(m.content_scripts.flatMap(c => c.matches).sort(), ["*://chat.openai.com/*", "*://chatgpt.com/*", "*://claude.ai/*",
     "*://copilot.com/*", "*://copilot.microsoft.com/*", "*://gemini.google.com/*", "*://perplexity.ai/*", "*://www.copilot.com/*", "*://www.perplexity.ai/*"]);
@@ -377,4 +377,17 @@ test("N8 product name is exact in every page title and the manifest", () => {
     assert.ok(t.includes("Pepper — The Personal AI Prompter"), f + ": " + t);
   }
   assert.ok(!/Pepper Prompter|PepperAI|Pepper AI Prompt/i.test(fs.readFileSync(path.join(dir, "README.md"), "utf8")));
+});
+
+test("Smartmouth: the AI says what you meant, writes the prompt, and says why; the older layout still parses", () => {
+  const sp = C.buildSystemPrompt(C.buildContext(state()), "auto");
+  for (const m of ["===UNDERSTOOD===", "===PROMPT===", "===WHY===", "===ASSUMPTIONS==="]) assert.ok(sp.includes(m), m);
+  const r = C.parseReply("===UNDERSTOOD===\nYou want a spicy curry recipe.\n===PROMPT===\nYou're a chef. Give me a recipe.\n===WHY===\n- Added a chef\n- Asked for steps\n===ASSUMPTIONS===\n- I cook for four.");
+  assert.deepEqual(r, { prompt: "You're a chef. Give me a recipe.", understood: "You want a spicy curry recipe.", why: ["Added a chef", "Asked for steps"], assumptions: ["I cook for four."], status: "ok" });
+  assert.equal(C.parseReply("===UNDERSTOOD===\nX\n===PROMPT===\nA\n===PROMPT===\nB").status, "malformed", "a repeated marker can't hide text");
+  assert.equal(C.parseReply("===UNDERSTOOD===\nX\n===PROMPT===\n\n===ASSUMPTIONS===\n- none").status, "malformed", "an empty prompt is never inserted");
+  const local = C.improveLocally("chickent curry recipe indian spicy full", C.buildContext(state({ profile: { answers: { q3: "student" } } })));
+  assert.equal(local.understood, "You want a complete, authentic recipe for a spicy Indian chicken curry.");
+  assert.ok(local.why.some(w => /chickent → chicken/.test(w)), "the spelling fix is explained");
+  assert.ok(local.why.some(w => /Left your job and studies out/.test(w)));
 });

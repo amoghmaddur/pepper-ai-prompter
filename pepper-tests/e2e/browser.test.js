@@ -110,7 +110,8 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
   } });
   const P = (p, sel) => p.locator("#pepper-host").locator(sel);
   try {
-    await storage.completeSetup({ q3: "graduate student", q4: "software", q6: "Professional", q7: "Beginner", q13: "no em dashes", q14: "recruiters", q15: "Light touch" });
+    // No AI at first (the checks below are about Pepper's own writer); a key is added later on.
+    await storage.completeSetup({ q3: "graduate student", q4: "software", q6: "Professional", q7: "Beginner", q13: "no em dashes", q14: "recruiters", q15: "Light touch" }, { provider: "none" });
     await storage.consent("chatgpt", true); await storage.consent("claude", true); await storage.consent("copilot", true);
     const gpt = await ctx.newPage(); await gpt.goto("https://chatgpt.com/"); await gpt.waitForTimeout(1200);
 
@@ -122,7 +123,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       await gpt.screenshot({ path: path.join(SHOTS, "panel-compose.png") });
       await P(gpt, "#go").click();
       await P(gpt, "#result").waitFor({ state: "visible" });
-      assert.match(await P(gpt, "#engine").textContent(), /^Improved by Pepper on this device\./);
+      assert.match(await P(gpt, "#engine").textContent(), /^Written by Pepper on this device\./);
       const body = await P(gpt, "#prompt").innerText();
       assert.match(body, /^You're an experienced recruiter and career coach in software\.\nWrite a cover letter for the Stripe new-grad SWE role\./);
       assert.match(body, /About me: I'm a graduate student in software\./);
@@ -213,7 +214,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       if (await P(gpt, "#result").isVisible()) await P(gpt, "#back").click();
       await P(gpt, "#raw").fill("write a cover letter for the Stripe new-grad SWE role");
       await P(gpt, "#go").click(); await P(gpt, "#result").waitFor({ state: "visible" });
-      await until(async () => (await P(gpt, "#engine").textContent()).startsWith("Improved by"));
+      await until(async () => (await P(gpt, "#engine").textContent()).startsWith("Written by"));
       assert.equal(apiCalls.length, 1, "one call");
       const call = apiCalls[0];
       assert.equal(new URL(call.url).host, "api.anthropic.com");
@@ -243,7 +244,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
     });
 
     await t.test("Improve in place: type in the chat box, one click rewrites it there, Undo puts it back, Alt+Enter works too", async () => {
-      apiReply = "I'm a graduate student in software. Give me a 5-day study plan for my algorithms exam, about 2 hours a day, hardest topics first.\n===ASSUMPTIONS===\n- My exam is next week.";
+      apiReply = "===UNDERSTOOD===\nYou want a study plan for your algorithms exam.\n===PROMPT===\nI'm a graduate student in software. Give me a 5-day study plan for my algorithms exam, about 2 hours a day, hardest topics first.\n===WHY===\n- Turned the shorthand into a clear request\n- Asked for a day-by-day plan\n===ASSUMPTIONS===\n- My exam is next week.";
       await storage.set({ pepper_active_project: null });
       const box = gpt.locator("#prompt-textarea");
       const sent = await gpt.evaluate(() => window.__sent.length);
@@ -257,7 +258,8 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       assert.equal(apiCalls.length, before + 1, "one call");
       assert.match(apiCalls.at(-1).body.messages[0].content, /<rough>\nstudy plan algos exam\n<\/rough>/);
       assert.match(await box.innerText(), /^I'm a graduate student in software\. Give me a 5-day study plan/);
-      assert.ok(!(await box.innerText()).includes("ASSUMPTIONS"), "assumptions never go in the box");
+      assert.ok(!/ASSUMPTIONS|UNDERSTOOD|WHY|You want a study plan/.test(await box.innerText()), "only the prompt goes in the box");
+      await until(async () => /^Got it\. You want a study plan for your algorithms exam\./.test(await P(gpt, "#toast").textContent()), 2000);
       await gpt.screenshot({ path: path.join(SHOTS, "improve-done.png") });
       await P(gpt, "#imp").click(); // Undo
       await until(async () => (await box.innerText()).trim() === "study plan algos exam", 3000);
@@ -267,25 +269,26 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       await P(gpt, "#orb").click();
       assert.equal(await P(gpt, "#result").isVisible(), true, "the panel shows what was just improved");
       assert.deepEqual(await P(gpt, "#assume .as input").evaluateAll(els => els.map(e => e.value)), ["My exam is next week."]);
+      assert.equal(await P(gpt, "#understood").textContent(), "What you meant: You want a study plan for your algorithms exam.");
+      await P(gpt, "#whyBox summary").click();
+      assert.deepEqual(await P(gpt, "#whyList li").allTextContents(), ["Turned the shorthand into a clear request", "Asked for a day-by-day plan"]);
+      await gpt.screenshot({ path: path.join(SHOTS, "panel-understood-why.png") });
       await P(gpt, "#close").click();
       await gpt.evaluate(() => { document.getElementById("prompt-textarea").innerHTML = ""; });
       await storage.set({ pepper_active_project: "p1" });
     });
 
-    await t.test("A slow AI: Pepper's own draft goes in the box at once, then the AI's version replaces it", async () => {
-      apiDelay = 4500;
-      apiReply = "Polished by the AI: plan me a 3-day budget trip to Goa.\n===ASSUMPTIONS===\n- none";
+    await t.test("A slow AI: the box keeps her words while the AI thinks, then gets the AI's version, never a quick draft", async () => {
+      apiDelay = 3000;
+      apiReply = "===UNDERSTOOD===\nYou want a cheap 3-day Goa plan.\n===PROMPT===\nPolished by the AI: plan me a 3-day budget trip to Goa.\n===WHY===\n- Named the budget\n===ASSUMPTIONS===\n- none";
       const box = gpt.locator("#prompt-textarea");
       await gpt.evaluate(() => { document.getElementById("prompt-textarea").innerHTML = ""; });
       await box.click(); await gpt.keyboard.type("goa trip 3 days cheap");
       await P(gpt, "#imp").waitFor({ state: "visible", timeout: 3000 });
-      const t0 = Date.now();
       await P(gpt, "#imp").click();
-      await until(async () => /Plan a 3-day trip to Goa on a tight budget\./.test(await box.innerText()), 4000);
-      assert.ok(Date.now() - t0 < 4400, `Pepper's draft is in before the AI answers (${Date.now() - t0} ms)`);
-      assert.ok(!/Polished by the AI/.test(await box.innerText()), "the AI hasn't answered yet");
-      await until(async () => (await P(gpt, "#imp").getAttribute("data-mode")) === "polish", 2000);
-      assert.equal(await P(gpt, "#imp").getAttribute("data-mode"), "polish", "Undo stays on while the AI polishes");
+      await until(async () => (await P(gpt, "#impText").textContent()) === "Thinking…", 1500);
+      await wait(1500);
+      assert.equal((await box.innerText()).trim(), "goa trip 3 days cheap", "nothing replaces her words until the AI's version is ready");
       await until(async () => /^Polished by the AI/.test(await box.innerText()), 8000);
       await until(async () => (await P(gpt, "#imp").getAttribute("data-mode")) === "done", 2000);
       apiDelay = 0;

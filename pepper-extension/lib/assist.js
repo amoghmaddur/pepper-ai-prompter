@@ -44,11 +44,12 @@
   const REQUIRED = ["name", "q3", "q1", "q2", "focus"];
   // The AIs that can write prompts. Chrome's runs on this computer; Gemini has a free key.
   const PROVIDERS = [
+    { id: "auto", label: "Automatic (free, nothing to set up)", keyed: false },
     { id: "chrome", label: "Chrome's built-in AI (free, on this computer)", keyed: false },
     { id: "gemini", label: "Google Gemini (free key)", keyed: true, help: "Free from Google AI Studio", url: "https://aistudio.google.com/apikey" },
     { id: "anthropic", label: "Anthropic (Claude)", keyed: true, help: "From the Anthropic Console", url: "https://console.anthropic.com/settings/keys" },
     { id: "openai", label: "OpenAI", keyed: true, help: "From the OpenAI platform", url: "https://platform.openai.com/api-keys" },
-    { id: "none", label: "None for now", keyed: false }
+    { id: "none", label: "None: Pepper's own writer only", keyed: false }
   ];
   const defaultFeatures = () => Object.fromEntries(FEATURES.map(f => [f.id, f.on]));
 

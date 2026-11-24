@@ -68,11 +68,7 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       await ob.screenshot({ path: path.join(SHOTS, "v04-onboarding-powers.png") });
       await ob.check('#powers input[data-f="autofill"]'); await ob.check("#learn"); await ob.click("#next");
       await ob.fill('#details input[data-d="email"]', "maya@example.com"); await ob.click("#next");
-      await until(async () => (await ob.inputValue("#provider")) === "gemini", 3000);
-      assert.equal(await ob.inputValue("#provider"), "gemini", "no built-in AI in this browser, so the free Gemini key is suggested");
-      assert.match(await ob.innerHTML("#keyHelp"), /aistudio\.google\.com\/apikey/);
-      await ob.screenshot({ path: path.join(SHOTS, "v05-onboarding-ai.png") });
-      await ob.click("#next"); // AI step: Finish without one
+      assert.equal(await ob.textContent("#next"), "Finish", "no question about which AI: one is on already");
       await ob.locator('[data-step="done"]').waitFor({ state: "visible" });
       assert.equal(await ob.textContent("#doneTitle"), "You're all set, Maya!");
       assert.deepEqual(await ob.locator("#goSites a").allTextContents(), ["Open Claude", "Open ChatGPT"]);
@@ -81,7 +77,8 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       assert.equal(s.pepper_profile.completed, true);
       assert.deepEqual(s.pepper_profile.answers.q1, ["Claude", "ChatGPT"]);
       assert.ok(!("q5" in s.pepper_profile.answers) && !("q6" in s.pepper_profile.answers), "how Pepper should act isn't asked up front");
-      assert.equal(s.pepper_settings.provider, "none", "no key pasted, so no AI is saved");
+      assert.equal(s.pepper_settings.provider, "auto", "an AI is on without asking");
+      await storage.patch("pepper_settings", { provider: "none" }); // the next checks are about Pepper with no AI
       assert.equal(s.pepper_profile.answers.focus, "morning");
       assert.equal(s.pepper_settings.floating, "ai");
       assert.equal(s.pepper_settings.features.autofill, true);
@@ -99,7 +96,7 @@ test("Pepper v0.4 companion", { timeout: 300000 }, async (t) => {
       await P(gpt, "#orb").click();
       assert.deepEqual(await P(gpt, ".tab:visible").allTextContents(), ["Write", "Fix", "Pocket", "Fill"]);
       assert.equal(await P(gpt, '#lenses .lens[aria-checked="true"]').textContent(), "Balanced");
-      await until(async () => /No AI connected/.test(await P(gpt, "#setupNote").textContent()), 3000);
+      await until(async () => /No AI is on/.test(await P(gpt, "#setupNote").textContent()), 3000);
       await gpt.close();
     });
 

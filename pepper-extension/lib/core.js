@@ -300,7 +300,7 @@
       "2. If it continues the conversation on screen (\"make it shorter\", \"now in python\", \"why?\"), keep it a follow-up that points at the earlier messages (\"your last answer\", \"the code above\"). The assistant can already see them, so don't restate them.",
       "3. Add what changes the answer: the goal and who it is for, relevant facts about the user, the deliverable, its format and length, the tone, the scope and what a great answer includes. Leave out anything that wouldn't change the answer.",
       `4. Match the size to the request. A simple question stays a short question of one to three sentences. A real task (writing, code, analysis, planning, research) becomes a well-organised prompt; use a few short labelled parts (such as Goal, Context, Task, Requirements, Output) only when there are enough details to need them. Stay under ${cap} words.`,
-      "5. Write as the user, in the first person, talking to the assistant (\"I'm…\", \"Write me…\", \"Help me…\"). Open with a specific expert role when expertise shapes the answer (a South Indian home chef for a curry, a senior Go engineer for a bug, a recruiter for a cover letter). Spell out what a great answer includes for this kind of request. If the user wants an image, write a vivid image description instead (subject, style, composition, lighting).",
+      "5. Write as the user talking to the assistant: \"I\" is the user (\"I'm a nurse…\", \"Write me…\", \"Help me…\") and \"you\" is the assistant. When expertise shapes the answer, open by telling the assistant who to be, in the second person (\"You're an experienced South Indian home chef.\", \"You're a senior Go engineer.\", \"You're a recruiter.\"); never describe the user as that expert. Spell out what a great answer includes for this kind of request. If the user wants an image, write a vivid image description instead (subject, style, composition, lighting).",
       "6. Never invent facts about the user: experience, employers, numbers, names, dates or preferences. When a missing detail would change the answer, tell the assistant to ask the user for it first, rather than guessing or leaving blanks.",
       "7. Keep everything the user supplied exactly as given: pasted text, code, error messages, quotes, links and numbers.",
       "8. Use only the profile facts that change this answer. A cover letter or a thesis needs the user's background; a recipe, a trip or a general question doesn't, so never add the user's job or studies just because they're in the profile. Apply tone, format and things to avoid only where they fit.",
@@ -310,7 +310,15 @@
       lensInstruction(lens) || null,
       ctx.files.some(f => f.text) ? "The user's files are attached after the prompt under SOURCE FILES. Refer to them by name (\"my resume\", \"the attached notes\"); don't copy them out." : null,
       "",
-      `Output only the rewritten prompt. Then, on its own line, write ${ASSUMPTION_MARKER} and list each fact about the user you needed but didn't have, one per line starting with "- ", in the first person as the user would confirm it (for example "- I'm applying for roles in the US."). If there are none, write "- none". No preamble, no explanation, no quotation marks or code fences around the prompt.`,
+      "Answer in exactly this layout, each marker on its own line, and nothing else:",
+      "===UNDERSTOOD===",
+      "One short sentence to the user saying what you think they really meant to ask, in plain words (for example \"You want a complete, spicy South-Indian-style chicken curry recipe you can cook at home.\"). Decide this first; the prompt follows from it.",
+      "===PROMPT===",
+      "The rewritten prompt, ready to send as it is. No quotation marks or code fences around it.",
+      "===WHY===",
+      "Two to four short lines starting with \"- \", each naming one thing you added or changed and why it gets a better answer.",
+      ASSUMPTION_MARKER,
+      "Each fact about the user you needed but didn't have, one per line starting with \"- \", in the first person as the user would confirm it (for example \"- I'm applying for roles in the US.\"). If there are none, write \"- none\".",
       "",
       "USER PROFILE (the only facts about the user you may use):",
       ...(about.length ? about : ["(nothing yet)"])
@@ -587,8 +595,19 @@
     }
     return best && !tie ? keepCase(w, best) : w;
   }
-  function cleanText(text, known) {
-    return String(text).replace(/[A-Za-z][A-Za-z'’]*/g, w => fixWord(w, known)).replace(/\s+([,.!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
+  function cleanText(text, known, fixes) {
+    return String(text).replace(/[A-Za-z][A-Za-z'’]*/g, w => { const f = fixWord(w, known); if (fixes && f !== w && f.toLowerCase() !== w.toLowerCase()) fixes.push(`${w} → ${f}`); return f; })
+      .replace(/\s+([,.!?])/g, "$1").replace(/\s{2,}/g, " ").trim();
+  }
+  /** "Give me a recipe for X." -> "You want a recipe for X." */
+  function restate(task) {
+    const t = String(task || "").replace(/[.]$/, "");
+    if (/\?$/.test(t)) return `You're asking: ${t}`;
+    const m = t.match(/^(give me|write|draft|plan|make me|make|create|design|fix|explain|summarize|summarise|compare|translate|help me with|help me|improve|prepare me for|review|suggest)\s+(.*)$/i);
+    if (!m) return `You want help with: ${t.charAt(0).toLowerCase() + t.slice(1)}.`;
+    const v = m[1].toLowerCase();
+    return v === "give me" ? `You want ${m[2]}.` : v.startsWith("help me") ? `You want help ${v === "help me with" ? "with " : ""}${m[2]}.`
+      : v === "make me" ? `You want the AI to make you ${m[2]}.` : `You want the AI to ${v} ${m[2]}.`;
   }
 
   /** Splits what to do from material the user pasted (code, text to work on), which is never changed. */
@@ -694,8 +713,9 @@
     const lens = o.lens || "auto";
     const known = new Set([...(o.known || []), ...String((ctx.project && ctx.project.name) || "").toLowerCase().split(/\W+/), ...String(ctx.role || "").toLowerCase().split(/\W+/)]);
     const { ask: rough, material } = splitMaterial(raw);
-    const ask = cleanText(rough, known);
-    if (o.inChat && !material) { const f = followUp(ask); if (f) return { prompt: f, domain: "followup" }; }
+    const fixes = [];
+    const ask = cleanText(rough, known, fixes);
+    if (o.inChat && !material) { const f = followUp(ask); if (f) return { prompt: f, domain: "followup", understood: "A follow-up to the last answer on screen.", why: ["Made the follow-up specific, so the AI knows exactly what to change"] }; }
     const d = domainOf(ask + " " + (material ? material.slice(0, 400) : ""));
     const s = detailsOf(ask, raw, d, ctx);
     s.material = material;
@@ -724,7 +744,14 @@
     if (b.clarify) extra.push(b.clarify);
     if (extra.length) L.push("", ...extra);
     if (material) L.push("", material);
-    return { prompt: L.join("\n").replace(/\n{3,}/g, "\n\n").trim(), domain: d ? d.id : "general" };
+    const why = [];
+    if (fixes.length) why.push(`Fixed the spelling: ${fixes.slice(0, 4).join(", ")}`);
+    if (b.role && L[0] === b.role) why.push(`Gave the AI the right expert to be: ${b.role.replace(/^You're (an? )?/, "").split(/,| who | in the | that /)[0].replace(/[.]$/, "")}`);
+    if (include.length) why.push(`Spelled out the ${include.length} things a great answer includes`);
+    if (about.length) why.push("Added your background, because this one is about you");
+    else if (ctx.role || ctx.industry) why.push("Left your job and studies out: they wouldn't change this answer");
+    if (b.clarify) why.push("Asked the AI to check with you first if a key detail is missing");
+    return { prompt: L.join("\n").replace(/\n{3,}/g, "\n\n").trim(), domain: d ? d.id : "general", understood: restate(b.task), why: why.slice(0, 4) };
   }
   /** Kept for the playground and older callers: the prompt Pepper writes with no AI. */
   function offlinePrompt(raw, ctx, opts) { return improveLocally(raw, ctx, opts).prompt; }
@@ -737,21 +764,33 @@
     return String(t || "").replace(/^\s*```[a-zA-Z]*[ \t]*\n/, "").replace(/\n?```\s*$/, "").trim();
   }
   /** Returns {prompt, assumptions[], status: "ok"|"missing"|"malformed"|"empty"}. Only `prompt` may ever be inserted. */
+  const BLOCK_RE = /^[ \t]*={3,}[ \t]*(UNDERSTOOD|PROMPT|WHY|ASSUMPTIONS)[ \t]*={3,}[ \t]*$/gim;
+  const listLines = (s) => String(s || "").split(/\r?\n/).map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim()).filter(l => l && !/^(none|n\/a)\.?$/i.test(l));
+  /**
+   * Returns {prompt, understood, why[], assumptions[], status: "ok"|"missing"|"malformed"|"empty"}.
+   * Only `prompt` may ever be inserted; the rest is shown to the user.
+   */
   function parseReply(text) {
     const t = stripFences(text);
-    if (!t) return { prompt: "", assumptions: [], status: "empty" };
-    const found = [...t.matchAll(MARKER_RE)];
-    if (found.length === 0) return { prompt: t, assumptions: [], status: "missing" };
-    if (found.length > 1) return { prompt: t, assumptions: [], status: "malformed" };
-    const m = found[0];
-    const prompt = t.slice(0, m.index).trim();
-    const tail = t.slice(m.index + m[0].length);
-    if (!prompt) return { prompt: t, assumptions: [], status: "malformed" };
-    if (findSections(tail).length >= 2) return { prompt: t, assumptions: [], status: "malformed" };
-    const assumptions = tail.split(/\r?\n/)
-      .map(l => l.replace(/^\s*(?:[-*•]|\d+[.)])\s*/, "").trim())
-      .filter(l => l && !/^(none|n\/a)\.?$/i.test(l));
-    return { prompt, assumptions, status: "ok" };
+    const none = { understood: "", why: [], assumptions: [] };
+    if (!t) return { ...none, prompt: "", status: "empty" };
+    const marks = [...t.matchAll(BLOCK_RE)];
+    const names = marks.map(m => m[1].toUpperCase());
+    if (new Set(names).size !== names.length) return { ...none, prompt: t, status: "malformed" };
+    const part = {};
+    marks.forEach((m, i) => { part[names[i]] = t.slice(m.index + m[0].length, i + 1 < marks.length ? marks[i + 1].index : t.length).trim(); });
+    const head = marks.length ? t.slice(0, marks[0].index).trim() : t;
+    let prompt = head, understood = "";
+    if ("PROMPT" in part) prompt = part.PROMPT;
+    if ("UNDERSTOOD" in part) {
+      const [first, ...rest] = part.UNDERSTOOD.split(/\r?\n/);
+      understood = first.trim();
+      if (!("PROMPT" in part) && !head) prompt = rest.join("\n").trim(); // the prompt followed the line without its own marker
+    }
+    if (!prompt) return { ...none, prompt: t, status: "malformed" };
+    if ("ASSUMPTIONS" in part && findSections(part.ASSUMPTIONS).length >= 2) return { ...none, prompt: t, status: "malformed" };
+    return { prompt: prompt.replace(/^["“]|["”]$/g, "").trim(), understood, why: listLines(part.WHY).slice(0, 5), assumptions: listLines(part.ASSUMPTIONS),
+      status: "ASSUMPTIONS" in part ? "ok" : "missing" };
   }
 
   const SECTION_RE = /^[ \t]*(?:#{1,6}[ \t]*)?(?:\*\*)?[ \t]*(ROLE|CONTEXT|TASK|CONSTRAINTS|OUTPUT FORMAT|SUCCESS CRITERIA)[ \t]*(?:\*\*)?[ \t]*:?[ \t]*(?:\*\*)?[ \t]*(.*)$/gim;
@@ -999,7 +1038,7 @@
     return d;
   }
 
-  const DEFAULT_MODELS = { anthropic: "claude-haiku-5-5", openai: "gpt-5.6-sol", gemini: "gemini-flash-latest" };
+  const DEFAULT_MODELS = { anthropic: "claude-sonnet-5-5", openai: "gpt-5.6-sol", gemini: "gemini-flash-latest" };
 
   /* ---------- suggestions for the panel ---------- */
   /**

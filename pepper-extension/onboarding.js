@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const store = (op) => chrome.runtime.sendMessage({ type: "STORE", op });
 
-const STEPS = ["welcome", "you", "sites", "uses", "focus", "float", "powers", "kit", "key", "done"];
+const STEPS = ["welcome", "you", "sites", "uses", "focus", "float", "powers", "kit", "done"];
 const USES = C.QUESTIONS.find(q => q.id === "q2").opts;
 let step = 0;
 let D = { answers: {}, settings: {}, details: {}, features: A.defaultFeatures(), learn: false, nudge: false, floating: null };
@@ -139,20 +139,6 @@ const R = {
       return "";
     }
   },
-  key: {
-    async render() {
-      $("key").value = "";
-      $("key").placeholder = D.settings.hasKey ? `A key is saved (${D.settings.keyHint || "hidden"}). Paste a new one to replace it.` : "Paste your key";
-      // Filled at once (so Finish never reads an empty list), then moved to Chrome's own AI if this browser has it.
-      if (!$("provider").options.length) {
-        AI.fillSelect($("provider"), D.settings.provider && D.settings.provider !== "none" ? D.settings.provider : "gemini");
-        syncKey();
-        const best = await AI.suggested(D.settings.provider);
-        if (best !== $("provider").value && !$("provider").dataset.touched) { $("provider").value = best; syncKey(); }
-      } else syncKey();
-    },
-    check: () => ""
-  },
   done: {
     render() {
       const name = D.answers.name;
@@ -203,42 +189,16 @@ async function addResume(f) {
   if (r && r.ok) D.resume = r.item;
 }
 
-/* ---------------- model key ---------------- */
-const AI = self.PepperAIConnect;
-const keyedAI = (p) => A.PROVIDERS.some(x => x.id === p && x.keyed);
-function syncKey() {
-  const p = $("provider").value;
-  $("keyField").hidden = !keyedAI(p); $("key").disabled = !keyedAI(p);
-  $("testKey").hidden = p === "none";
-  $("testKey").textContent = p === "chrome" ? "Turn it on" : "Save and test";
-  $("keyHelp").innerHTML = AI.helpHtml(p);
-  $("keyNote").textContent = "";
-  $("keyWhy").textContent = p === "chrome" ? "It runs on this computer, so what you type never leaves it. The first time, Chrome downloads the model."
-    : p === "none" ? "You can connect one any time in Pepper's settings."
-    : "When you ask Pepper to write, what you typed, your profile answers, active memories, your project's files and the end of the chat on screen go to that provider, and nowhere else. The key stays in this browser.";
-}
-$("provider").onchange = () => { $("provider").dataset.touched = "1"; syncKey(); };
-const say = (cls, text) => { $("keyNote").className = "small " + cls; $("keyNote").textContent = text; };
-$("testKey").onclick = async () => {
-  const provider = $("provider").value, apiKey = $("key").value.trim();
-  if (keyedAI(provider) && !apiKey && !(D.settings.hasKey && D.settings.provider === provider)) { say("bad", "Paste a key first."); return; }
-  await AI.connect(provider, apiKey, say);
-  $("key").value = "";
-  D.settings = (await chrome.storage.local.get("pepper_settings")).pepper_settings || D.settings;
-};
-
 /* ---------------- saving ---------------- */
 async function saveProgress() {
   await store({ op: "set", key: "pepper_profile", value: { answers: D.answers, completed: false } });
 }
 async function finish() {
   const settingsPatch = { onboarded: true, floating: D.floating, features: D.features };
-  // Keys go to the worker's vault, never into settings.
-  const pv = $("provider").value || "none", key = $("key").value.trim();
-  // Finish is a click, so Chrome's model download can start from here.
-  if (pv === "chrome") { self.PepperLocalAI.enable(); await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "chrome" }); }
-  else if (keyedAI(pv) && key) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: pv, apiKey: key });
-  else if (!(keyedAI(pv) && D.settings.hasKey && D.settings.provider === pv)) await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "none" });
+  // An AI is on without asking: Automatic, unless an AI was already chosen. Finish is a click, so
+  // Chrome's on-device model can start downloading here when this computer can run it.
+  if (!D.settings.provider || D.settings.provider === "none") await chrome.runtime.sendMessage({ type: "SET_KEY", provider: "auto" });
+  self.PepperLocalAI.status().then(st => { if (st === "downloadable") self.PepperLocalAI.enable(); }).catch(() => {});
   await store({ op: "objPatch", key: "pepper_settings", patch: settingsPatch });
   if (D.features.autofill || Object.keys(D.details).length) await store({ op: "set", key: "pepper_details", value: D.details });
   // Learning consent changes only if the switch was changed here: turning it on covers your favorite sites,
@@ -276,7 +236,7 @@ function show(i) {
   $("bar").style.width = (step / (STEPS.length - 1) * 100) + "%";
   $("stepNo").textContent = name === "welcome" || name === "done" ? "" : `Step ${step} of ${total}`;
   $("back").hidden = step === 0 || name === "done";
-  $("next").textContent = name === "welcome" ? "Let's go" : name === "done" ? "Close" : name === "key" ? "Finish" : (name === "kit" || name === "key") ? "Continue" : "Next";
+  $("next").textContent = name === "welcome" ? "Let's go" : name === "done" ? "Close" : name === "kit" ? "Finish" : "Next";
   $("next").classList.toggle("ghost", name === "done");
   $("buddy").innerHTML = pep(MOODS[name] || "");
   window.scrollTo(0, 0);
@@ -287,7 +247,7 @@ async function next() {
   const problem = R[name].check();
   if (problem) { err(problem); return; }
   if (["you", "sites", "uses", "focus"].includes(name)) await saveProgress();
-  if (name === "key") {
+  if (name === "kit") {
     $("next").disabled = true;
     const why = await finish();
     $("next").disabled = false;

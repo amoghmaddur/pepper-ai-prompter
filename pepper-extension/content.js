@@ -199,7 +199,13 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 .check{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink);margin-top:10px}
 .check input{accent-color:var(--pepper)}
 .busy .primary{position:relative;color:transparent}
-.busy .primary::after{content:"Improving your prompt…";position:absolute;color:var(--pepper-ink);font-weight:600}
+.busy .primary::after{content:"Working out what you meant…";position:absolute;color:var(--pepper-ink);font-weight:600}
+.understood{margin:4px 0 10px;padding:8px 11px;border-radius:12px;background:var(--sunk);border-left:3px solid var(--pepper);font-size:13px;line-height:1.45}
+.understood b{color:var(--pepper)}
+.whybox{margin-top:8px;font-size:12.5px;color:var(--muted)}
+.whybox summary{cursor:pointer;font-weight:700;color:var(--pepper)}
+.whybox ul{margin:6px 0 0;padding-left:18px}
+.whybox li{margin:2px 0}
 .engine.polish{animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.45}}
 .prompt.fresh{animation:fresh .9s ease-out}
@@ -410,8 +416,10 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
             <span class="meta"><span class="wc" id="wc"></span><span id="target"></span></span>
           </div>
           <div class="warn" id="warn" role="alert"></div>
+          <p class="understood" id="understood" hidden></p>
           <div class="prompt" id="prompt" tabindex="0" aria-label="Your prompt"></div>
           <textarea class="editor" id="editor" hidden aria-label="Edit your prompt"></textarea>
+          <details class="whybox" id="whyBox" hidden><summary>Why this prompt works</summary><ul id="whyList"></ul></details>
           <div class="files" id="files"><span id="filesUsed"></span><label><input type="checkbox" id="attach" checked> Attach file text</label></div>
           <div class="assume" id="assume" aria-live="polite"></div>
           <div class="tools" id="tools">
@@ -794,7 +802,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   const connectAI = () => send({ type: "OPEN_PAGE", page: "dashboard.html", hash: "settings" });
   function renderSetup() {
     const n = $("setupNote");
-    n.innerHTML = aiOn() ? "" : `No AI connected, so ${esc(SITE ? SITE.name : "your AI")} will work out what you mean before answering. <button id="addKey">Connect a free AI</button> to see the better prompt first.`;
+    n.innerHTML = aiOn() ? "" : `No AI is on, so Pepper writes your prompts itself. <button id="addKey">Turn on an AI</button> for sharper ones.`;
     const b = root.getElementById("addKey");
     if (b) b.onclick = connectAI;
   }
@@ -842,15 +850,16 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     text = text.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
     return text.length < 160 ? "" : text.slice(-2400);
   }
-  const PROVIDER_NAME = { gemini: "Gemini", anthropic: "Claude", openai: "OpenAI", chrome: "Chrome's AI" };
-  const aiName = () => PROVIDER_NAME[S.settings.provider] || "Your AI";
+  const PROVIDER_NAME = { gemini: "Gemini", anthropic: "Claude", openai: "OpenAI", chrome: "Chrome's AI", auto: "The free AI", free: "The free AI" };
+  const aiName = (via) => PROVIDER_NAME[via || S.settings.provider] || "Your AI";
+  // Starting the AI early on a hover is only worth it when answers aren't rationed (the free AI gives one every 45 s).
+  const canPrefetch = () => ["gemini", "anthropic", "openai", "chrome"].includes(S.settings.provider) || !!(aiState && aiState.engine === "builtin");
   /** Why the AI didn't answer, in a few words. */
   const whyNot = (r) => r && r.busy ? "is busy right now" : r && /quota|rate|limit/i.test(r.error || "") ? "hit its usage limit" : "didn't answer";
   /**
-   * Pepper's own writer drafts the prompt instantly, on this device. The user's AI, when connected,
-   * improves on that draft; if it's missing or busy, the draft is the prompt.
+   * The AI works out what the user meant and writes the prompt, with Pepper's own draft as a hint.
+   * If no AI answers, Pepper's draft is the prompt. Jobs are shared, so a hover can start the AI early.
    */
-  const QUICK_MS = 1200; // how long to wait for the AI before showing Pepper's own draft
   const jobs = new Map();
   function startRewrite(raw, ctx, lens) {
     const key = [lens, S.activeProjectId || "", ctx.files.length, raw].join("\u0001");
@@ -859,13 +868,13 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     const conversation = recentConversation();
     const opts = { site: SITE ? SITE.name : ((A.AI_SITES.find(x => x.id === $("sendTo").value) || fav()).name), inChat: !!conversation, conversation };
     const local = C.improveLocally(raw, ctx, { lens, inChat: !!conversation });
-    const draft = { engine: "local", prompt: local.prompt, assumptions: [], status: "ok" };
+    const draft = { engine: "local", prompt: local.prompt, understood: local.understood, why: local.why, assumptions: [], status: "ok" };
     const job = { key, at: Date.now(), local: draft };
-    job.final = llm(C.buildSystemPrompt(ctx, lens, opts), C.buildUserMessage(raw, ctx, { ...opts, draft: local.prompt }), 1500, 20000).then(r => {
-      if (r && r.ok && r.text) { const p = C.parseReply(r.text); if (p.prompt) return { engine: "llm", model: r.model, ...p }; }
+    job.final = llm(C.buildSystemPrompt(ctx, lens, opts), C.buildUserMessage(raw, ctx, { ...opts, draft: local.prompt }), 2000, 35000).then(r => {
+      if (r && r.ok && r.text) { const p = C.parseReply(r.text); if (p.prompt) return { engine: "llm", model: r.model, via: r.via, ...p }; }
       jobs.delete(key); // only good answers are kept for reuse
       if (noAI(r) && aiState) aiState.engine = "none";
-      return { ...draft, noAI: noAI(r), why: noAI(r) ? "" : whyNot(r), error: noAI(r) ? null : ((r && r.error) || "No reply") };
+      return { ...draft, noAI: noAI(r), failed: noAI(r) ? "" : whyNot(r), failedVia: r && r.via, error: noAI(r) ? null : ((r && r.error) || "No reply") };
     });
     jobs.set(key, job);
     for (const [k, j] of jobs) if (Date.now() - j.at > 120000) jobs.delete(k);
@@ -880,22 +889,13 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     const lens = currentLens;
     setBusy(true); mood("think");
     const job = startRewrite(raw, ctx, lens);
-    const first = await within(job.final, QUICK_MS);
+    const res = await job.final;
     setBusy(false); mood(null);
-    const base = { raw, lens, lensSource, ctx, overrides: {}, job: job.key };
-    if (first) { showResult({ ...first, ...base }); return; }
-    // The AI is still thinking: show Pepper's draft now and swap in the AI's version when it lands.
-    showResult({ ...job.local, ...base, polishing: true });
-    const fin = await job.final;
-    if (!out || out.job !== job.key) return;
-    const untouched = !out.edited && !out.editing && !out.inserted && !out.assumptions.some(a => a.state !== "open");
-    if (fin.engine === "llm" && untouched) { showResult({ ...fin, ...base }); $("prompt").classList.add("fresh"); setTimeout(() => $("prompt").classList.remove("fresh"), 900); return; }
-    Object.assign(out, { polishing: false, late: fin.engine === "llm" ? fin : null, why: fin.why, error: fin.error, noAI: fin.noAI });
-    renderResult();
+    showResult({ ...res, raw, lens, lensSource, ctx, overrides: {}, job: job.key });
   }
   $("go").onclick = runExpand;
   // Pointing at the button starts the AI early; the click picks up the same call.
-  $("go").addEventListener("mouseenter", () => { const raw = $("raw").value.trim(); if (raw.length >= 2) startRewrite(raw, ctxWithPage(), currentLens); });
+  $("go").addEventListener("mouseenter", () => { const raw = $("raw").value.trim(); if (raw.length >= 2 && canPrefetch()) startRewrite(raw, ctxWithPage(), currentLens); });
 
   function setBusy(b) {
     $("compose").classList.toggle("busy", b);
@@ -938,16 +938,17 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     renderAssumptions();
     // Shorter and Longer work everywhere (Pepper's writer redoes it); formal and casual need an AI.
     root.querySelectorAll("#tools button[data-t]").forEach(b => b.hidden = o.engine === "saved" || (o.engine === "local" && !/shorten|expand/.test(b.dataset.t)));
-    $("engine").classList.toggle("polish", !!o.polishing);
+    $("understood").hidden = !o.understood;
+    $("understood").innerHTML = o.understood ? `<b>What you meant:</b> ${esc(o.understood)}` : "";
+    $("whyBox").hidden = !(o.why && o.why.length);
+    $("whyList").innerHTML = (o.why || []).map(x => `<li>${esc(x)}</li>`).join("");
     $("engine").innerHTML =
-      o.polishing ? `Pepper's draft. ${esc(aiName())} is polishing it…` :
-      o.late ? `Pepper's draft. <button class="link" id="useLate">Use ${esc(aiName())}'s version</button>` :
-      o.engine === "llm" ? `Improved by ${esc(o.model || "your AI")}.` :
+      o.engine === "llm" ? `Written by ${esc(o.model || "your AI")}.` :
       o.engine === "saved" ? "From your saved prompts." :
-      o.error ? `Improved by Pepper on this device: ${esc(aiName())} ${esc(o.why || "didn't answer")}.` :
-      `Improved by Pepper on this device. <button class="link" id="connectAI">Connect a free AI</button> for even sharper rewrites.`;
+      o.error ? `Written by Pepper on this device: ${esc(aiName(o.failedVia))} ${esc(o.failed || "didn't answer")}.` :
+      `Written by Pepper on this device. <button class="link" id="connectAI">Turn on an AI</button> for sharper rewrites.`;
     const ca = root.getElementById("connectAI"); if (ca) ca.onclick = connectAI;
-    const ul = root.getElementById("useLate"); if (ul) ul.onclick = () => showResult({ ...o.late, raw: o.raw, lens: o.lens, lensSource: o.lensSource, ctx: o.ctx, overrides: {}, job: o.job });
+
     // On an AI site the prompt goes in this box; anywhere else it goes to the user's AI.
     $("sendRow").hidden = !!SITE;
     if (!SITE) {
@@ -1016,7 +1017,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     if (r && r.ok && r.text) {
       const p = C.parseReply(r.text);
       const kept = out.assumptions.filter(a => a.state === "open").map(a => a.text);
-      showResult({ ...out, ...p, assumptions: [...new Set([...kept, ...p.assumptions])], engine: "llm", model: r.model });
+      showResult({ ...out, ...p, understood: p.understood || out.understood, why: p.why.length ? p.why : out.why, assumptions: [...new Set([...kept, ...p.assumptions])], engine: "llm", model: r.model });
       return;
     }
     toast(noAI(r) ? "Connect an AI in Pepper's settings to reshape prompts." : "Your AI returned: " + ((r && r.error) || "no reply") + " The prompt is unchanged.");
@@ -1128,6 +1129,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   $("fixGrab").onclick = () => { captureSource(); fixResult = null; renderFix(); };
   $("fixIn").addEventListener("input", () => { if (source.target && $("fixIn").value !== source.text) source = { text: $("fixIn").value, target: source.target }; });
   root.querySelectorAll("#fixKinds .kind").forEach(b => b.onclick = () => runFix(b.dataset.k));
+  let fixRun = 0;
   async function runFix(kind) {
     const text = $("fixIn").value;
     if (!text.trim()) { $("fixIn").focus(); toast("Select some text on the page, or paste it here."); return; }
@@ -1137,13 +1139,13 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     const h = A.HELPERS[kind];
     $("fixTitle").textContent = h.label;
     $("fixChanges").textContent = ""; $("fixMeta").textContent = "";
-    let quick = null;
-    if (kind === "fix") { const t = A.tidyText(text); quick = fixResult = { kind, text: t.text, changes: t.changes, replaceable: true, offline: true, polishing: true }; renderFixResult(); }
-    else { $("fixText").textContent = "Thinking…"; $("fixOut").hidden = false; }
+    const run = ++fixRun;
+    fixResult = null; $("fixText").textContent = "Thinking…"; $("fixOut").hidden = false;
+    ["fixReplace", "fixSend"].forEach(id => $(id).hidden = true);
     mood("think");
-    const r = await llm(A.helperSystem(kind, ctx), A.helperUser(text), 1500, 20000);
+    const r = await llm(A.helperSystem(kind, ctx), A.helperUser(text), 2000, 35000);
     mood(null);
-    if (quick && fixResult !== quick) return; // moved on, or already replaced it on the page
+    if (run !== fixRun) return; // asked for something else meanwhile
     const none = noAI(r);
     if (r && r.ok && r.text) fixResult = { kind, text: r.text, replaceable: kind !== "similar" && kind !== "explain" };
     else if (kind === "fix") {
@@ -1685,7 +1687,7 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
         && (chipMode !== "idle" || (text.length >= (S.settings.minChars || 6) && C.collapse(text) !== C.collapse(improvedText)));
       if (!want) { imp.classList.remove("show"); return; }
       imp.dataset.mode = chipMode;
-      $("impText").textContent = chipMode === "busy" ? "Improving…" : chipMode === "done" || chipMode === "polish" ? "Undo" : "Improve";
+      $("impText").textContent = chipMode === "busy" ? "Thinking…" : chipMode === "done" || chipMode === "polish" ? "Undo" : "Improve";
       imp.title = chipMode === "done" ? "Put back what you wrote" : chipMode === "polish" ? `${aiName()} is polishing Pepper's draft. Click to put back what you wrote.`
         : chipMode === "busy" ? "Pepper is rewriting your prompt" : "Improve this prompt (Alt+Enter)";
       imp.classList.add("show");
@@ -1721,8 +1723,10 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   }
   function afterImprove(res) {
     const n = out ? out.assumptions.length : 0;
-    if (res.engine === "local" && res.why) toast(`${aiName()} ${res.why}, so I improved it myself.`);
-    else if (n) toast(`Improved. I wasn't sure about ${n} detail${n === 1 ? "" : "s"}; click me to add ${n === 1 ? "it" : "them"}.`);
+    const more = n ? ` I wasn't sure about ${n} detail${n === 1 ? "" : "s"}: click me to add ${n === 1 ? "it" : "them"}.` : " Click me to see why.";
+    if (res.engine === "local" && res.failed) toast(`${aiName(res.failedVia)} ${res.failed}, so I wrote it myself.${more}`);
+    else if (res.understood) toast(`Got it. ${res.understood}${more}`);
+    else if (n) toast(`Improved.${more}`);
   }
   /** Rewrites what's in the chat box and puts it back in the box. The user still presses send. */
   async function improveInPlace() {
@@ -1734,25 +1738,20 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
     pickLearnedLens();
     const ctx = ctxNow(), lens = currentLens;
     const job = startRewrite(raw, ctx, lens);
-    const first = await within(job.final, QUICK_MS);
+    const res = await job.final;
     mood(null);
+    if (run !== improveRun) { improving = false; return; }
     // Still typing while Pepper worked: never throw the newer words away.
     if (getInputText().trim() !== raw) { improving = false; chipState("idle"); toast("You kept typing, so I left your text alone. Click Improve again."); return; }
-    const ok = await putInBox(first || job.local, raw, ctx, lens, job.key);
+    const ok = await putInBox(res, raw, ctx, lens, job.key);
     improving = false;
     if (!ok) return;
     mood("happy", 1400);
-    if (first) { chipState("done"); afterImprove(first); return; }
-    // Pepper's draft is in the box. The AI's version replaces it when it lands, unless the box changed.
-    chipState("polish");
-    const fin = await job.final;
-    if (run !== improveRun || chipMode !== "polish") return; // undone, edited or improved again meanwhile
-    if (fin.engine === "llm" && C.collapse(getInputText()) === C.collapse(improvedText)) { if (await putInBox(fin, raw, ctx, lens, job.key)) mood("happy", 1000); }
     chipState("done");
-    afterImprove(fin);
+    afterImprove(res);
   }
   function prefetch() {
-    if (!SITE || !ready() || chipMode !== "idle") return;
+    if (!SITE || !ready() || chipMode !== "idle" || !canPrefetch()) return;
     const raw = getInputText().trim();
     if (raw.length < (S.settings.minChars || 6) || C.collapse(raw) === C.collapse(improvedText)) return;
     pickLearnedLens();
