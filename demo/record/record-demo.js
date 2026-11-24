@@ -1,6 +1,7 @@
-/* Records the Pepper v0.4 walkthrough: the real extension, driven by Playwright,
+/* Records the Pepper v0.5 walkthrough: the real extension, driven by Playwright,
    on the local mock pages from pepper-tests/e2e/mock-sites.js. It runs the real
-   setup, writes a prompt on ChatGPT, fixes text on an article, hands a prompt to
+   setup, improves a rough prompt right in ChatGPT's box with the Improve button,
+   writes one from the panel, fixes text on an article, hands a prompt to
    Claude, uses the Pocket, fills a job form and opens the dashboard. Adds an
    on-screen cursor and captions, stitches the tabs into one video with ffmpeg,
    and writes demo/media/pepper-demo.mp4, pepper-demo.gif and poster.png.
@@ -117,7 +118,7 @@ const PEP = `<svg class="orb" viewBox="0 0 48 48"><defs><radialGradient id="g" c
   start(page);
   try {
     /* 0 · title */
-    await card(page, `${PEP}<h1>Pepper 0.4</h1><p>A little companion that floats on your screen: better prompts, cleaner writing, your files and details one click away, and job forms filled for you.</p>`);
+    await card(page, `${PEP}<h1>Pepper 0.5</h1><p>Type your prompt as roughly as you like, then click <b>Improve</b>. Pepper also cleans up your writing, keeps your files and details one click away, and fills job forms for you.</p>`);
     mark("title"); await wait(4200);
 
     /* 1 · setup, for real */
@@ -145,22 +146,50 @@ const PEP = `<svg class="orb" viewBox="0 0 48 48"><defs><radialGradient id="g" c
     await click(page, page.locator('#details input[data-d="email"]'), 100); await page.locator('#details input[data-d="email"]').pressSequentially("maya@example.com", { delay: 18 });
     await wait(500);
     await click(page, page.locator("#next"), 300);
-    await click(page, page.locator("#next"), 900); // no model key: Pepper works without one
+    await caption(page, "01 · Setup", "Give Pepper an AI, or don't.", "Chrome's own AI or a free Gemini key polishes prompts further. Without one, Pepper writes them itself.", "br");
+    await wait(1800);
+    await click(page, page.locator("#next"), 900); // no key: Pepper's own writer does the work
     await caption(page, "01 · Setup", "Done. Pepper fits her now.", null, "br");
     await wait(1600);
     await storage.patch("pepper_details", { fullName: "Maya Rao", phone: "617-555-0100", linkedin: "https://linkedin.com/in/maya", country: "USA" });
 
-    /* 2 · write a prompt on ChatGPT */
+    /* 2 · improve a rough prompt right in ChatGPT's box */
     await page.goto("https://chatgpt.com/"); await page.waitForTimeout(900); await overlay(page);
+    mark("improve");
+    const box = page.locator("#prompt-textarea");
+    await caption(page, "02 · Improve · ChatGPT", "She types it the way she thinks it.", "Typos and all.");
+    await click(page, box, 200);
+    await box.pressSequentially("chickent curry recipe indian spicy full", { delay: 55 });
+    await P(page, "#imp").waitFor({ state: "visible", timeout: 4000 }); await wait(500);
+    await caption(page, "02 · Improve · ChatGPT", "One click on Improve.", "Pepper rewrites it in the box: the right expert, the details, and what a great answer includes.");
+    await click(page, P(page, "#imp"), 300);
+    await page.waitForFunction(() => /home chef/.test(document.getElementById("prompt-textarea").innerText), null, { timeout: 5000 });
+    mark("improved");
+    await wait(2600);
+    for (let i = 0; i < 3; i++) { await box.evaluate(el => el.scrollBy({ top: 70, behavior: "smooth" })); await wait(900); }
+    await wait(700);
+    await caption(page, "02 · Improve · ChatGPT", "Undo puts back what she wrote.", "Pepper never presses send. She does.");
+    await click(page, P(page, "#imp"), 1300);
+    await page.evaluate(() => { document.getElementById("prompt-textarea").innerHTML = ""; });
+    await caption(page, "02 · Improve · ChatGPT", "Every kind of request gets its own expert.", "Alt+Enter works too. Her job title only goes in when it matters.");
+    await click(page, box, 200);
+    await box.pressSequentially("goa trip 3 days cheap", { delay: 55 });
+    await wait(400);
+    await page.keyboard.press("Alt+Enter");
+    await page.waitForFunction(() => /travel planner/.test(document.getElementById("prompt-textarea").innerText), null, { timeout: 5000 });
+    await wait(3600);
+    await page.evaluate(() => { document.getElementById("prompt-textarea").innerHTML = ""; document.getElementById("prompt-textarea").dispatchEvent(new Event("input", { bubbles: true })); });
+
+    /* 2b · or write from the panel */
     mark("write");
-    await caption(page, "02 · Write · ChatGPT", "A few words in, a six-part prompt out.", "It starts on Clarify, because she likes things step by step.");
+    await caption(page, "02 · Write · ChatGPT", "Or start from Pepper's panel.", "A cover letter is about her, so her background goes in.");
     await click(page, P(page, "#orb"), 600);
+    if (await P(page, "#result").isVisible()) await click(page, P(page, "#back"), 300);
     await click(page, P(page, "#raw"), 150);
     await P(page, "#raw").pressSequentially("write a cover letter for the Stripe new-grad SWE role", { delay: 26 });
-    await moveTo(page, P(page, "#learnedNote")); await wait(900);
-    await click(page, P(page, "#go"), 900);
-    for (let i = 0; i < 4; i++) { await P(page, "#prompt").evaluate(el => el.scrollBy({ top: 110, behavior: "smooth" })); await wait(450); }
-    await caption(page, "02 · Write · ChatGPT", "Into ChatGPT's box. Pepper never presses send.", "She reads it, then sends it herself.");
+    await click(page, P(page, "#go"), 1200);
+    for (let i = 0; i < 3; i++) { await P(page, "#prompt").evaluate(el => el.scrollBy({ top: 110, behavior: "smooth" })); await wait(500); }
+    await caption(page, "02 · Write · ChatGPT", "Into ChatGPT's box, ready to send.", "She reads it, then sends it herself.");
     await click(page, P(page, "#insert"), 1500);
 
     /* 3 · fix text anywhere */
@@ -176,7 +205,7 @@ const PEP = `<svg class="orb" viewBox="0 0 48 48"><defs><radialGradient id="g" c
 
     /* 4 · hand a prompt to Claude */
     mark("handoff");
-    await caption(page, "04 · Ask AI", "Similar ideas? Pepper writes the prompt for her AI.", "Without a model key, it opens Claude with the prompt in the box.");
+    await caption(page, "04 · Ask AI", "Similar ideas? Pepper writes the prompt for her AI.", "Without an AI connected, it opens Claude with the prompt in the box.");
     await page.evaluate(() => { const r = document.createRange(); r.selectNodeContents(document.getElementById("para")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); });
     await moveTo(page, page.locator("#para"));
     await P(page, "#pill").waitFor({ state: "visible", timeout: 4000 }); await wait(400);
@@ -217,8 +246,8 @@ const PEP = `<svg class="orb" viewBox="0 0 48 48"><defs><radialGradient id="g" c
     await click(page, page.locator('#nav a[data-s="pocket"]'), 2000);
 
     /* 8 · end */
-    await card(page, `${PEP}<h1>Pepper v0.4</h1>
-      <div class="row"><span class="pill"><b>138</b> unit tests</span><span class="pill"><b>36</b> browser checks</span><span class="pill">Chromium · Brave · Edge</span><span class="pill">no server</span></div>
+    await card(page, `${PEP}<h1>Pepper v0.5</h1>
+      <div class="row"><span class="pill"><b>140</b> unit tests</span><span class="pill"><b>39</b> browser checks</span><span class="pill">Chromium · Brave</span><span class="pill">works without an AI</span><span class="pill">no server</span></div>
       <p class="k">Code</p><p style="margin-top:8px;color:#E4EBE6">${REPO}</p>`);
     mark("end"); await wait(4200);
     mark("done");
@@ -255,11 +284,11 @@ function encode(parts, marks) {
   fs.writeFileSync(path.join(tmp, "list.txt"), list.map(f => `file '${f.replace(/\\/g, "/")}'`).join("\n"));
   const mp4 = path.join(MEDIA, "pepper-demo.mp4");
   ff(["-f", "concat", "-safe", "0", "-i", path.join(tmp, "list.txt"), "-c", "copy", "-movflags", "+faststart", mp4]);
-  // poster: Pepper's six-part prompt on ChatGPT
-  ff(["-ss", String(marks.write / 1000 + 12), "-i", mp4, "-frames:v", "1", path.join(MEDIA, "poster.png")]);
-  // README gif: fix on a page, then filling a job form
+  // poster: the rough prompt, improved in ChatGPT's box
+  ff(["-ss", String(marks.improved / 1000 + 2), "-i", mp4, "-frames:v", "1", path.join(MEDIA, "poster.png")]);
+  // README gif: typing a rough prompt and clicking Improve, then filling a job form
   const pal = path.join(tmp, "palette.png");
-  const g0 = marks.fix / 1000, g1 = Math.min(marks.handoff / 1000, g0 + 14);
+  const g0 = marks.improve / 1000, g1 = Math.min(marks.write / 1000, marks.improved / 1000 + 7);
   const f0 = marks.fill / 1000, f1 = marks.dashboard / 1000;
   const gifSrc = path.join(tmp, "gif.mp4");
   fs.writeFileSync(path.join(tmp, "gif.txt"), [`file '${mp4.replace(/\\/g, "/")}'\ninpoint ${g0}\noutpoint ${g1}`, `file '${mp4.replace(/\\/g, "/")}'\ninpoint ${f0}\noutpoint ${f1}`].join("\n"));

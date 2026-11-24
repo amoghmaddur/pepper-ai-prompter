@@ -273,7 +273,7 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
     });
 
     await t.test("A slow AI: Pepper's own draft goes in the box at once, then the AI's version replaces it", async () => {
-      apiDelay = 2500;
+      apiDelay = 4500;
       apiReply = "Polished by the AI: plan me a 3-day budget trip to Goa.\n===ASSUMPTIONS===\n- none";
       const box = gpt.locator("#prompt-textarea");
       await gpt.evaluate(() => { document.getElementById("prompt-textarea").innerHTML = ""; });
@@ -281,9 +281,11 @@ test("panel flows (open-root test copy)", { timeout: 180000 }, async (t) => {
       await P(gpt, "#imp").waitFor({ state: "visible", timeout: 3000 });
       const t0 = Date.now();
       await P(gpt, "#imp").click();
-      await until(async () => /Plan a 3-day trip to Goa on a tight budget\./.test(await box.innerText()), 2400);
-      assert.ok(Date.now() - t0 < 2400, `Pepper's draft is in before the AI answers (${Date.now() - t0} ms)`);
-      assert.equal(await P(gpt, "#imp").getAttribute("data-mode"), "polish");
+      await until(async () => /Plan a 3-day trip to Goa on a tight budget\./.test(await box.innerText()), 4000);
+      assert.ok(Date.now() - t0 < 4400, `Pepper's draft is in before the AI answers (${Date.now() - t0} ms)`);
+      assert.ok(!/Polished by the AI/.test(await box.innerText()), "the AI hasn't answered yet");
+      await until(async () => (await P(gpt, "#imp").getAttribute("data-mode")) === "polish", 2000);
+      assert.equal(await P(gpt, "#imp").getAttribute("data-mode"), "polish", "Undo stays on while the AI polishes");
       await until(async () => /^Polished by the AI/.test(await box.innerText()), 8000);
       await until(async () => (await P(gpt, "#imp").getAttribute("data-mode")) === "done", 2000);
       apiDelay = 0;

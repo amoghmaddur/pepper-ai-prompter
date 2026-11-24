@@ -18,7 +18,7 @@ To open it locally, open `demo/index.html` in a browser. When `core.js` isn't be
 
 ## Video walkthrough
 
-`media/pepper-demo.mp4` (about 90 seconds: setup, a prompt on ChatGPT, Fix on an article, a hand-off to Claude, the Pocket, filling a job form, the dashboard) and `media/pepper-demo.gif` (Fix and Fill, for the README).
+`media/pepper-demo.mp4` (about 2 minutes: setup, improving a rough prompt right in ChatGPT's box with the Improve button and Alt+Enter, a prompt from the panel, Fix on an article, a hand-off to Claude, the Pocket, filling a job form, the dashboard) and `media/pepper-demo.gif` (Improve and Fill, for the README).
 
 `record/record-demo.js` drives the real extension with Playwright on the local mock sites from `pepper-tests/e2e/mock-sites.js`, with the model API mocked. It adds an on-screen cursor and captions, then uses ffmpeg to produce the MP4, the GIF, the poster frame and the README screenshots. Like the browser tests, it uses the test copy of the extension whose shadow root is `open`, the only difference from the shipped build, so Playwright can click inside the panel.
 

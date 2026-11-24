@@ -9,9 +9,9 @@
 
 ### [▶ Try the prompt engine in your browser](https://amoghmaddur.github.io/pepper-ai-prompter/) · [What's new in 0.4](CHANGELOG.md)
 
-![Pepper fixing text on a page, then filling a job application from the user's details](demo/media/pepper-demo.gif)
+![Typing a rough, misspelt prompt in ChatGPT, clicking Pepper's Improve button and getting a chef's full recipe brief, then Pepper filling a job application](demo/media/pepper-demo.gif)
 
-<sub>Recorded with Playwright driving the real extension in Brave, on local mock pages. [Full 90-second walkthrough (MP4)](demo/media/pepper-demo.mp4).</sub>
+<sub>Recorded with Playwright driving the real extension in Brave, on local mock pages. [Full 2-minute walkthrough (MP4)](demo/media/pepper-demo.mp4).</sub>
 
 <table>
 <tr>

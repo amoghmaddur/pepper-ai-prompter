@@ -1866,12 +1866,15 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
 
   /* ---------------- on/off: a hard gate on everything ---------------- */
   let observer = null, attachTimer = null, bound = false;
+  // The chat box grows as text goes in: the Improve button moves with it straight away.
+  const boxSize = typeof ResizeObserver === "function" ? new ResizeObserver(() => { if (imp.classList.contains("show")) updateChip(); }) : null;
   function attach() {
     const el = findInput();
     if (el && el !== inputEl) {
-      if (inputEl) inputEl.removeEventListener("input", onType, true);
+      if (inputEl) { inputEl.removeEventListener("input", onType, true); if (boxSize) boxSize.unobserve(inputEl); }
       inputEl = el;
       el.addEventListener("input", onType, true);
+      if (boxSize) boxSize.observe(el);
     }
     updateChip();
   }
@@ -1887,7 +1890,8 @@ textarea:focus,input:focus,select.inp:focus{outline:none;border-color:var(--pepp
   function unbind() {
     if (!bound) return; bound = false;
     if (observer) observer.disconnect(); observer = null;
-    if (inputEl) inputEl.removeEventListener("input", onType, true);
+    // Let go of the box completely, so turning Pepper back on listens to it again.
+    if (inputEl) { inputEl.removeEventListener("input", onType, true); if (boxSize) boxSize.unobserve(inputEl); inputEl = null; }
     document.removeEventListener("keydown", onKeyDownCapture, true);
     document.removeEventListener("click", onClickCapture, true);
     if (pending) { pending.cancelled = true; pending = null; }
